@@ -11,6 +11,7 @@ import {
 } from "./types";
 
 const TICK_MILLISECONDS = 100;
+const LANDMASS_REFRESH_INTERVAL_TICKS = 50;
 
 type SnapshotListener = (snapshot: GameSnapshot) => void;
 
@@ -104,6 +105,8 @@ export class DataStore {
   private readonly shipOrigins: Map<string, TileSummary> = new Map();
   private readonly shipDestinations: Map<string, TileSummary> = new Map();
   private readonly shipManifests: Map<string, number> = new Map();
+  private landmassCache: { tick: number; records: LandmassRecord[] } | null =
+    null;
 
   constructor(initialSnapshot?: GameSnapshot) {
     this.snapshot = initialSnapshot ?? {
@@ -160,6 +163,7 @@ export class DataStore {
       const discovered = this.findLiveGame();
       if (discovered) {
         this.game = discovered;
+        this.landmassCache = null;
         this.refreshFromGame();
         if (this.attachHandle !== undefined) {
           window.clearTimeout(this.attachHandle);
@@ -207,7 +211,8 @@ export class DataStore {
     try {
       const players = this.game.playerViews();
       this.captureAllianceChanges(players);
-      const currentTimeMs = this.game.ticks() * TICK_MILLISECONDS;
+      const currentTick = this.game.ticks();
+      const currentTimeMs = currentTick * TICK_MILLISECONDS;
       const allianceDurationMs =
         this.game.config().allianceDuration() * TICK_MILLISECONDS;
 
@@ -216,7 +221,7 @@ export class DataStore {
         this.createPlayerRecord(player, currentTimeMs, localPlayer),
       );
       const ships = this.createShipRecords();
-      const landmasses = this.createLandmassRecords();
+      const landmasses = this.resolveLandmassRecords(currentTick);
 
       this.snapshot = {
         players: records,
@@ -230,6 +235,7 @@ export class DataStore {
       // If the game context changes while we're reading from it, try attaching again.
       console.warn("Failed to refresh sidebar data", error);
       this.game = null;
+      this.landmassCache = null;
       if (this.refreshHandle !== undefined) {
         window.clearInterval(this.refreshHandle);
         this.refreshHandle = undefined;
@@ -255,6 +261,26 @@ export class DataStore {
     ships.sort((a, b) => a.ownerName.localeCompare(b.ownerName));
     this.pruneStaleShipMemory(new Set(ships.map((ship) => ship.id)));
     return ships;
+  }
+
+  private resolveLandmassRecords(currentTick: number): LandmassRecord[] {
+    if (!this.game) {
+      this.landmassCache = null;
+      return [];
+    }
+
+    const cache = this.landmassCache;
+    if (
+      cache &&
+      cache.tick <= currentTick &&
+      currentTick - cache.tick < LANDMASS_REFRESH_INTERVAL_TICKS
+    ) {
+      return cache.records;
+    }
+
+    const records = this.createLandmassRecords();
+    this.landmassCache = { tick: currentTick, records };
+    return records;
   }
 
   private createLandmassRecords(): LandmassRecord[] {
