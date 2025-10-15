@@ -243,7 +243,7 @@ export class DataStore {
       return [];
     }
 
-    const units = this.game.units();
+    const units = this.game.units("Transport", "Trade Ship", "Warship");
     const ships: ShipRecord[] = [];
     for (const unit of units) {
       const type = this.normalizeShipType(unit.type());
@@ -321,14 +321,15 @@ export class DataStore {
     }
 
     const queue: number[] = [startRef];
+    let index = 0;
     visited.add(startRef);
     let tiles = 0;
     let anchorRef = startRef;
     let anchorX = this.game.x(startRef);
     let anchorY = this.game.y(startRef);
 
-    while (queue.length > 0) {
-      const ref = queue.shift()!;
+    while (index < queue.length) {
+      const ref = queue[index++];
       if (!this.isTileOwnedBy(ref, ownerSmallId)) {
         continue;
       }
@@ -567,11 +568,12 @@ export class DataStore {
     const start = unit.tile();
     const visited = new Set<number>([start]);
     const queue: number[] = [start];
+    let index = 0;
     const ownerSmallId = this.safePlayerSmallId(unit.owner());
     const maxExplored = 4096;
 
-    while (queue.length > 0 && visited.size <= maxExplored) {
-      const current = queue.shift()!;
+    while (index < queue.length && visited.size <= maxExplored) {
+      const current = queue[index++];
       const neighbors = this.game.neighbors(current) ?? [];
       for (const neighbor of neighbors) {
         if (visited.has(neighbor)) {
