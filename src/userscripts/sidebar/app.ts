@@ -130,10 +130,7 @@ export class SidebarApp {
     this.layoutContainer = this.sidebar.querySelector(
       "[data-sidebar-layout]",
     ) as HTMLElement;
-    this.rootNode = createGroup("horizontal", [
-      createLeaf("players"),
-      createLeaf("clanmates"),
-    ]);
+    this.rootNode = createLeaf("clanmates");
     this.renderLayout();
     this.store.subscribe((snapshot) => {
       this.snapshot = snapshot;
@@ -639,7 +636,7 @@ export class SidebarApp {
     this.cleanupLeafView(leaf);
     const parentInfo = this.findParent(leaf);
     if (!parentInfo) {
-      this.rootNode = createLeaf("players");
+      this.rootNode = createLeaf("clanmates");
       this.renderLayout();
       return;
     }
@@ -648,7 +645,7 @@ export class SidebarApp {
     parent.sizes.splice(index, 1);
 
     if (parent.children.length === 0) {
-      this.rootNode = createLeaf("players");
+      this.rootNode = createLeaf("clanmates");
     } else if (parent.children.length === 1) {
       this.replaceNode(parent, parent.children[0]);
     } else {
