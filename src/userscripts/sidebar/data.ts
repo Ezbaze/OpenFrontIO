@@ -107,6 +107,7 @@ export class DataStore {
   private readonly shipManifests: Map<string, number> = new Map();
   private landmassCache: { tick: number; records: LandmassRecord[] } | null =
     null;
+  private landmassTrackingEnabled = false;
 
   constructor(initialSnapshot?: GameSnapshot) {
     this.snapshot = initialSnapshot ?? {
@@ -142,6 +143,30 @@ export class DataStore {
       landmasses: snapshot.landmasses ?? [],
     };
     this.notify();
+  }
+
+  setLandmassTrackingEnabled(enabled: boolean): void {
+    if (this.landmassTrackingEnabled === enabled) {
+      return;
+    }
+
+    this.landmassTrackingEnabled = enabled;
+
+    if (!enabled) {
+      this.landmassCache = null;
+      if (this.snapshot.landmasses.length > 0) {
+        this.snapshot = {
+          ...this.snapshot,
+          landmasses: [],
+        };
+        this.notify();
+      }
+      return;
+    }
+
+    if (this.game) {
+      this.refreshFromGame();
+    }
   }
 
   private notify(): void {
@@ -221,7 +246,9 @@ export class DataStore {
         this.createPlayerRecord(player, currentTimeMs, localPlayer),
       );
       const ships = this.createShipRecords();
-      const landmasses = this.resolveLandmassRecords(currentTick);
+      const landmasses = this.landmassTrackingEnabled
+        ? this.resolveLandmassRecords(currentTick)
+        : [];
 
       this.snapshot = {
         players: records,

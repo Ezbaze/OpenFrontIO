@@ -149,6 +149,7 @@ export interface PanelLeafNode {
   boundContainer?: HTMLElement;
   scrollHandler?: EventListener;
   pointerLeaveHandler?: EventListener;
+  viewCleanup?: () => void;
   element?: PanelLeafElements;
 }
 

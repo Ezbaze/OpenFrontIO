@@ -11,7 +11,7 @@ import {
   ViewType,
 } from "./types";
 import { clamp, createElement } from "./utils";
-import { buildViewContent } from "./views";
+import { buildViewContent, ViewLifecycleCallbacks } from "./views";
 
 const VIEW_OPTIONS: { value: ViewType; label: string }[] = [
   { value: "players", label: "Players" },
@@ -113,6 +113,7 @@ export class SidebarApp {
   private readonly store: DataStore;
   private snapshot: GameSnapshot;
   private rootNode: PanelNode;
+  private readonly activeLandmassLeaves = new Set<string>();
   private readonly overlayElements = new Map<
     OverlaySelector,
     OverlayRegistration
@@ -635,6 +636,7 @@ export class SidebarApp {
   }
 
   private closeLeaf(leaf: PanelLeafNode): void {
+    this.cleanupLeafView(leaf);
     const parentInfo = this.findParent(leaf);
     if (!parentInfo) {
       this.rootNode = createLeaf("players");
@@ -712,18 +714,41 @@ export class SidebarApp {
     const previousContainer =
       leaf.contentContainer ??
       (element.body.firstElementChild as HTMLElement | null);
+    const previousCleanup = leaf.viewCleanup;
     const previousScrollTop =
       leaf.scrollTop ?? previousContainer?.scrollTop ?? 0;
     const previousScrollLeft =
       leaf.scrollLeft ?? previousContainer?.scrollLeft ?? 0;
+    const lifecycle = this.createViewLifecycle(leaf);
     const nextContainer = buildViewContent(
       leaf,
       this.snapshot,
       () => this.refreshLeafContent(leaf),
       previousContainer ?? undefined,
+      lifecycle.callbacks,
     );
+    const replaced = !!previousContainer && nextContainer !== previousContainer;
+    if (replaced) {
+      if (previousCleanup) {
+        previousCleanup();
+      }
+      this.setLeafLandmassActive(leaf, false);
+    }
 
-    if (!previousContainer || nextContainer !== previousContainer) {
+    const newCleanup = lifecycle.getCleanup();
+    if (newCleanup) {
+      leaf.viewCleanup = newCleanup;
+    } else if (!replaced) {
+      leaf.viewCleanup = previousCleanup;
+    } else {
+      leaf.viewCleanup = undefined;
+    }
+
+    if (
+      !previousContainer ||
+      nextContainer !== previousContainer ||
+      nextContainer.parentElement !== element.body
+    ) {
       element.body.replaceChildren(nextContainer);
     }
 
@@ -739,6 +764,49 @@ export class SidebarApp {
       leaf.scrollTop = 0;
       leaf.scrollLeft = 0;
     }
+  }
+
+  private createViewLifecycle(leaf: PanelLeafNode): {
+    callbacks: ViewLifecycleCallbacks;
+    getCleanup: () => (() => void) | undefined;
+  } {
+    let cleanup: (() => void) | undefined;
+    const callbacks: ViewLifecycleCallbacks = {
+      onLandmassMount: () => this.setLeafLandmassActive(leaf, true),
+      onLandmassUnmount: () => this.setLeafLandmassActive(leaf, false),
+      registerCleanup: (fn) => {
+        cleanup = fn;
+      },
+    };
+    return {
+      callbacks,
+      getCleanup: () => cleanup,
+    };
+  }
+
+  private setLeafLandmassActive(leaf: PanelLeafNode, active: boolean): void {
+    const isActive = this.activeLandmassLeaves.has(leaf.id);
+    if (active) {
+      if (isActive) {
+        return;
+      }
+      this.activeLandmassLeaves.add(leaf.id);
+    } else {
+      if (!isActive) {
+        return;
+      }
+      this.activeLandmassLeaves.delete(leaf.id);
+    }
+    this.store.setLandmassTrackingEnabled(this.activeLandmassLeaves.size > 0);
+  }
+
+  private cleanupLeafView(leaf: PanelLeafNode): void {
+    const cleanup = leaf.viewCleanup;
+    leaf.viewCleanup = undefined;
+    if (cleanup) {
+      cleanup();
+    }
+    this.setLeafLandmassActive(leaf, false);
   }
 
   private bindLeafContainerInteractions(

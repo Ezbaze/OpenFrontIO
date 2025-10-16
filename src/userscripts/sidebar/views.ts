@@ -22,6 +22,12 @@ type RequestRender = () => void;
 
 type Metrics = ReturnType<typeof computePlayerMetrics>;
 
+export interface ViewLifecycleCallbacks {
+  onLandmassMount?: () => void;
+  onLandmassUnmount?: () => void;
+  registerCleanup?: (cleanup: () => void) => void;
+}
+
 interface AggregatedRow {
   key: string;
   label: string;
@@ -80,6 +86,7 @@ export function buildViewContent(
   snapshot: GameSnapshot,
   requestRender: RequestRender,
   existingContainer?: HTMLElement,
+  lifecycle?: ViewLifecycleCallbacks,
 ): HTMLElement {
   const view = leaf.view;
   const sortState = ensureSortState(leaf, view);
@@ -104,6 +111,7 @@ export function buildViewContent(
         sortState,
         onSort: handleSort,
         existingContainer,
+        lifecycle,
       });
     case "clanmates":
       return renderClanView({
@@ -113,6 +121,7 @@ export function buildViewContent(
         sortState,
         onSort: handleSort,
         existingContainer,
+        lifecycle,
       });
     case "teams":
       return renderTeamView({
@@ -122,6 +131,7 @@ export function buildViewContent(
         sortState,
         onSort: handleSort,
         existingContainer,
+        lifecycle,
       });
     case "ships":
       return renderShipView({
@@ -131,6 +141,7 @@ export function buildViewContent(
         sortState,
         onSort: handleSort,
         existingContainer,
+        lifecycle,
       });
     case "landmasses":
       return renderLandmassView({
@@ -140,6 +151,7 @@ export function buildViewContent(
         sortState,
         onSort: handleSort,
         existingContainer,
+        lifecycle,
       });
     default:
       return createElement("div", "text-slate-200 text-sm", "Unsupported view");
@@ -178,6 +190,7 @@ interface ViewRenderOptions {
   sortState: SortState;
   onSort: (key: SortKey) => void;
   existingContainer?: HTMLElement;
+  lifecycle?: ViewLifecycleCallbacks;
 }
 
 function renderPlayersView(options: ViewRenderOptions): HTMLElement {
@@ -357,13 +370,19 @@ function renderShipView(options: ViewRenderOptions): HTMLElement {
 }
 
 function renderLandmassView(options: ViewRenderOptions): HTMLElement {
-  const { leaf, snapshot, sortState, onSort, existingContainer } = options;
+  const { leaf, snapshot, sortState, onSort, existingContainer, lifecycle } =
+    options;
+  lifecycle?.onLandmassMount?.();
   const { container, tbody } = createTableShell({
     sortState,
     onSort,
     existingContainer,
     view: leaf.view,
     headers: LANDMASS_HEADERS,
+  });
+
+  lifecycle?.registerCleanup?.(() => {
+    lifecycle.onLandmassUnmount?.();
   });
 
   const playerLookup = new Map(

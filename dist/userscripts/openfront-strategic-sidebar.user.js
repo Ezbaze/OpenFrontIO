@@ -310,7 +310,13 @@
     { key: "origin", label: "Location", align: "left" },
   ];
   const DEFAULT_SORT_STATE = { key: "tiles", direction: "desc" };
-  function buildViewContent(leaf, snapshot, requestRender, existingContainer) {
+  function buildViewContent(
+    leaf,
+    snapshot,
+    requestRender,
+    existingContainer,
+    lifecycle,
+  ) {
     const view = leaf.view;
     const sortState = ensureSortState(leaf, view);
     const handleSort = (key) => {
@@ -333,6 +339,7 @@
           sortState,
           onSort: handleSort,
           existingContainer,
+          lifecycle,
         });
       case "clanmates":
         return renderClanView({
@@ -342,6 +349,7 @@
           sortState,
           onSort: handleSort,
           existingContainer,
+          lifecycle,
         });
       case "teams":
         return renderTeamView({
@@ -351,6 +359,7 @@
           sortState,
           onSort: handleSort,
           existingContainer,
+          lifecycle,
         });
       case "ships":
         return renderShipView({
@@ -360,6 +369,7 @@
           sortState,
           onSort: handleSort,
           existingContainer,
+          lifecycle,
         });
       case "landmasses":
         return renderLandmassView({
@@ -369,6 +379,7 @@
           sortState,
           onSort: handleSort,
           existingContainer,
+          lifecycle,
         });
       default:
         return createElement(
@@ -567,13 +578,18 @@
     return container;
   }
   function renderLandmassView(options) {
-    const { leaf, snapshot, sortState, onSort, existingContainer } = options;
+    const { leaf, snapshot, sortState, onSort, existingContainer, lifecycle } =
+      options;
+    lifecycle?.onLandmassMount?.();
     const { container, tbody } = createTableShell({
       sortState,
       onSort,
       existingContainer,
       view: leaf.view,
       headers: LANDMASS_HEADERS,
+    });
+    lifecycle?.registerCleanup?.(() => {
+      lifecycle?.onLandmassUnmount?.();
     });
     const playerLookup = new Map(
       snapshot.players.map((player) => [player.id, player]),
@@ -1639,6 +1655,7 @@
         createLeaf("players"),
         createLeaf("clanmates"),
       ]);
+      this.activeLandmassLeaves = new Set();
       this.renderLayout();
       this.store.subscribe((snapshot) => {
         this.snapshot = snapshot;
@@ -2081,6 +2098,7 @@
       this.renderLayout();
     }
     closeLeaf(leaf) {
+      this.cleanupLeafView(leaf);
       const parentInfo = this.findParent(leaf);
       if (!parentInfo) {
         this.rootNode = createLeaf("players");
@@ -2148,17 +2166,40 @@
       }
       const previousContainer =
         leaf.contentContainer ?? element.body.firstElementChild;
+      const previousCleanup = leaf.viewCleanup;
       const previousScrollTop =
         leaf.scrollTop ?? previousContainer?.scrollTop ?? 0;
       const previousScrollLeft =
         leaf.scrollLeft ?? previousContainer?.scrollLeft ?? 0;
+      const lifecycle = this.createViewLifecycle(leaf);
       const nextContainer = buildViewContent(
         leaf,
         this.snapshot,
         () => this.refreshLeafContent(leaf),
         previousContainer ?? undefined,
+        lifecycle.callbacks,
       );
-      if (!previousContainer || nextContainer !== previousContainer) {
+      const replaced =
+        !!previousContainer && nextContainer !== previousContainer;
+      if (replaced) {
+        if (previousCleanup) {
+          previousCleanup();
+        }
+        this.setLeafLandmassActive(leaf, false);
+      }
+      const newCleanup = lifecycle.getCleanup();
+      if (newCleanup) {
+        leaf.viewCleanup = newCleanup;
+      } else if (!replaced) {
+        leaf.viewCleanup = previousCleanup;
+      } else {
+        leaf.viewCleanup = undefined;
+      }
+      if (
+        !previousContainer ||
+        nextContainer !== previousContainer ||
+        nextContainer.parentElement !== element.body
+      ) {
         element.body.replaceChildren(nextContainer);
       }
       leaf.contentContainer = nextContainer;
@@ -2172,6 +2213,43 @@
         leaf.scrollTop = 0;
         leaf.scrollLeft = 0;
       }
+    }
+    createViewLifecycle(leaf) {
+      let cleanup;
+      const callbacks = {
+        onLandmassMount: () => this.setLeafLandmassActive(leaf, true),
+        onLandmassUnmount: () => this.setLeafLandmassActive(leaf, false),
+        registerCleanup: (fn) => {
+          cleanup = fn;
+        },
+      };
+      return {
+        callbacks,
+        getCleanup: () => cleanup,
+      };
+    }
+    setLeafLandmassActive(leaf, active) {
+      const isActive = this.activeLandmassLeaves.has(leaf.id);
+      if (active) {
+        if (isActive) {
+          return;
+        }
+        this.activeLandmassLeaves.add(leaf.id);
+      } else {
+        if (!isActive) {
+          return;
+        }
+        this.activeLandmassLeaves.delete(leaf.id);
+      }
+      this.store.setLandmassTrackingEnabled(this.activeLandmassLeaves.size > 0);
+    }
+    cleanupLeafView(leaf) {
+      const cleanup = leaf.viewCleanup;
+      leaf.viewCleanup = undefined;
+      if (cleanup) {
+        cleanup();
+      }
+      this.setLeafLandmassActive(leaf, false);
     }
     bindLeafContainerInteractions(leaf, container) {
       if (leaf.hoveredRowElement && !leaf.hoveredRowElement.isConnected) {
@@ -2236,6 +2314,7 @@
       this.shipDestinations = new Map();
       this.shipManifests = new Map();
       this.landmassCache = null;
+      this.landmassTrackingEnabled = false;
       this.snapshot = initialSnapshot ?? {
         players: [],
         allianceDurationMs: 0,
@@ -2265,6 +2344,26 @@
         landmasses: snapshot.landmasses ?? [],
       };
       this.notify();
+    }
+    setLandmassTrackingEnabled(enabled) {
+      if (this.landmassTrackingEnabled === enabled) {
+        return;
+      }
+      this.landmassTrackingEnabled = enabled;
+      if (!enabled) {
+        this.landmassCache = null;
+        if (this.snapshot.landmasses.length > 0) {
+          this.snapshot = {
+            ...this.snapshot,
+            landmasses: [],
+          };
+          this.notify();
+        }
+        return;
+      }
+      if (this.game) {
+        this.refreshFromGame();
+      }
     }
     notify() {
       for (const listener of this.listeners) {
@@ -2335,7 +2434,9 @@
           this.createPlayerRecord(player, currentTimeMs, localPlayer),
         );
         const ships = this.createShipRecords();
-        const landmasses = this.resolveLandmassRecords(currentTick);
+        const landmasses = this.landmassTrackingEnabled
+          ? this.resolveLandmassRecords(currentTick)
+          : [];
         this.snapshot = {
           players: records,
           allianceDurationMs,
