@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "./build/userscripts/sidebar",
+    "module": "ESNext",
+    "target": "ES2020",
+    "moduleResolution": "node",
+    "declaration": false,
+    "noEmit": false,
+    "sourceMap": false,
+    "rootDir": "./src/userscripts/sidebar",
+    "skipLibCheck": true
+  },
+  "include": ["src/userscripts/sidebar/**/*.ts"]
+}
