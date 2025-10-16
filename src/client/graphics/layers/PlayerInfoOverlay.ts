@@ -228,6 +228,7 @@ export class PlayerInfoOverlay extends LitElement implements Layer {
     let relationHtml: TemplateResult | null = null;
     const attackingTroops = player
       .outgoingAttacks()
+      .filter((a) => !a.retreating)
       .map((a) => a.troops)
       .reduce((a, b) => a + b, 0);
 
