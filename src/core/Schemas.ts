@@ -115,6 +115,7 @@ export type Player = z.infer<typeof PlayerSchema>;
 export type PlayerCosmetics = z.infer<typeof PlayerCosmeticsSchema>;
 export type PlayerCosmeticRefs = z.infer<typeof PlayerCosmeticRefsSchema>;
 export type PlayerPattern = z.infer<typeof PlayerPatternSchema>;
+export type PlayerColor = z.infer<typeof PlayerColorSchema>;
 export type Flag = z.infer<typeof FlagSchema>;
 export type GameStartInfo = z.infer<typeof GameStartInfoSchema>;
 
@@ -277,7 +278,7 @@ export const EmbargoIntentSchema = BaseIntentSchema.extend({
 export const DonateGoldIntentSchema = BaseIntentSchema.extend({
   type: z.literal("donate_gold"),
   recipient: ID,
-  gold: z.bigint().nullable(),
+  gold: z.number().nullable(),
 });
 
 export const DonateTroopIntentSchema = BaseIntentSchema.extend({
@@ -386,6 +387,7 @@ export const FlagSchema = z
 
 export const PlayerCosmeticRefsSchema = z.object({
   flag: FlagSchema.optional(),
+  color: z.string().optional(),
   patternName: PatternNameSchema.optional(),
   patternColorPaletteName: z.string().optional(),
 });
@@ -395,10 +397,17 @@ export const PlayerPatternSchema = z.object({
   patternData: PatternDataSchema,
   colorPalette: ColorPaletteSchema.optional(),
 });
+
+export const PlayerColorSchema = z.object({
+  color: z.string(),
+});
+
 export const PlayerCosmeticsSchema = z.object({
   flag: FlagSchema.optional(),
   pattern: PlayerPatternSchema.optional(),
+  color: PlayerColorSchema.optional(),
 });
+
 export const PlayerSchema = z.object({
   clientID: ID,
   username: UsernameSchema,

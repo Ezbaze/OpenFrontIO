@@ -174,6 +174,7 @@ export class PlayerImpl implements Player {
       ),
       hasSpawned: this.hasSpawned(),
       betrayals: stats?.betrayals,
+      lastDeleteUnitTick: this.lastDeleteUnitTick,
     };
   }
 
@@ -576,7 +577,11 @@ export class PlayerImpl implements Player {
   }
 
   canDonateGold(recipient: Player): boolean {
-    if (!this.isFriendly(recipient)) {
+    if (
+      !this.isAlive() ||
+      !recipient.isAlive() ||
+      !this.isFriendly(recipient)
+    ) {
       return false;
     }
     if (
@@ -599,7 +604,11 @@ export class PlayerImpl implements Player {
   }
 
   canDonateTroops(recipient: Player): boolean {
-    if (!this.isFriendly(recipient)) {
+    if (
+      !this.isAlive() ||
+      !recipient.isAlive() ||
+      !this.isFriendly(recipient)
+    ) {
       return false;
     }
     if (
@@ -746,6 +755,9 @@ export class PlayerImpl implements Player {
   }
 
   isFriendly(other: Player): boolean {
+    if (other.isDisconnected()) {
+      return false;
+    }
     return this.isOnSameTeam(other) || this.isAlliedWith(other);
   }
 
