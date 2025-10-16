@@ -11,6 +11,7 @@ import {
 } from "./types";
 
 const TICK_MILLISECONDS = 100;
+const LANDMASS_REFRESH_INTERVAL_TICKS = 50;
 
 type SnapshotListener = (snapshot: GameSnapshot) => void;
 
@@ -104,6 +105,9 @@ export class DataStore {
   private readonly shipOrigins: Map<string, TileSummary> = new Map();
   private readonly shipDestinations: Map<string, TileSummary> = new Map();
   private readonly shipManifests: Map<string, number> = new Map();
+  private landmassCache: { tick: number; records: LandmassRecord[] } | null =
+    null;
+  private landmassTrackingEnabled = false;
 
   constructor(initialSnapshot?: GameSnapshot) {
     this.snapshot = initialSnapshot ?? {
@@ -141,6 +145,30 @@ export class DataStore {
     this.notify();
   }
 
+  setLandmassTrackingEnabled(enabled: boolean): void {
+    if (this.landmassTrackingEnabled === enabled) {
+      return;
+    }
+
+    this.landmassTrackingEnabled = enabled;
+
+    if (!enabled) {
+      this.landmassCache = null;
+      if (this.snapshot.landmasses.length > 0) {
+        this.snapshot = {
+          ...this.snapshot,
+          landmasses: [],
+        };
+        this.notify();
+      }
+      return;
+    }
+
+    if (this.game) {
+      this.refreshFromGame();
+    }
+  }
+
   private notify(): void {
     for (const listener of this.listeners) {
       listener(this.snapshot);
@@ -160,6 +188,7 @@ export class DataStore {
       const discovered = this.findLiveGame();
       if (discovered) {
         this.game = discovered;
+        this.landmassCache = null;
         this.refreshFromGame();
         if (this.attachHandle !== undefined) {
           window.clearTimeout(this.attachHandle);
@@ -207,7 +236,8 @@ export class DataStore {
     try {
       const players = this.game.playerViews();
       this.captureAllianceChanges(players);
-      const currentTimeMs = this.game.ticks() * TICK_MILLISECONDS;
+      const currentTick = this.game.ticks();
+      const currentTimeMs = currentTick * TICK_MILLISECONDS;
       const allianceDurationMs =
         this.game.config().allianceDuration() * TICK_MILLISECONDS;
 
@@ -216,7 +246,9 @@ export class DataStore {
         this.createPlayerRecord(player, currentTimeMs, localPlayer),
       );
       const ships = this.createShipRecords();
-      const landmasses = this.createLandmassRecords();
+      const landmasses = this.landmassTrackingEnabled
+        ? this.resolveLandmassRecords(currentTick)
+        : [];
 
       this.snapshot = {
         players: records,
@@ -230,6 +262,7 @@ export class DataStore {
       // If the game context changes while we're reading from it, try attaching again.
       console.warn("Failed to refresh sidebar data", error);
       this.game = null;
+      this.landmassCache = null;
       if (this.refreshHandle !== undefined) {
         window.clearInterval(this.refreshHandle);
         this.refreshHandle = undefined;
@@ -243,7 +276,7 @@ export class DataStore {
       return [];
     }
 
-    const units = this.game.units();
+    const units = this.game.units("Transport", "Trade Ship", "Warship");
     const ships: ShipRecord[] = [];
     for (const unit of units) {
       const type = this.normalizeShipType(unit.type());
@@ -255,6 +288,26 @@ export class DataStore {
     ships.sort((a, b) => a.ownerName.localeCompare(b.ownerName));
     this.pruneStaleShipMemory(new Set(ships.map((ship) => ship.id)));
     return ships;
+  }
+
+  private resolveLandmassRecords(currentTick: number): LandmassRecord[] {
+    if (!this.game) {
+      this.landmassCache = null;
+      return [];
+    }
+
+    const cache = this.landmassCache;
+    if (
+      cache &&
+      cache.tick <= currentTick &&
+      currentTick - cache.tick < LANDMASS_REFRESH_INTERVAL_TICKS
+    ) {
+      return cache.records;
+    }
+
+    const records = this.createLandmassRecords();
+    this.landmassCache = { tick: currentTick, records };
+    return records;
   }
 
   private createLandmassRecords(): LandmassRecord[] {
@@ -321,14 +374,15 @@ export class DataStore {
     }
 
     const queue: number[] = [startRef];
+    let index = 0;
     visited.add(startRef);
     let tiles = 0;
     let anchorRef = startRef;
     let anchorX = this.game.x(startRef);
     let anchorY = this.game.y(startRef);
 
-    while (queue.length > 0) {
-      const ref = queue.shift()!;
+    while (index < queue.length) {
+      const ref = queue[index++];
       if (!this.isTileOwnedBy(ref, ownerSmallId)) {
         continue;
       }
@@ -567,11 +621,12 @@ export class DataStore {
     const start = unit.tile();
     const visited = new Set<number>([start]);
     const queue: number[] = [start];
+    let index = 0;
     const ownerSmallId = this.safePlayerSmallId(unit.owner());
     const maxExplored = 4096;
 
-    while (queue.length > 0 && visited.size <= maxExplored) {
-      const current = queue.shift()!;
+    while (index < queue.length && visited.size <= maxExplored) {
+      const current = queue[index++];
       const neighbors = this.game.neighbors(current) ?? [];
       for (const neighbor of neighbors) {
         if (visited.has(neighbor)) {

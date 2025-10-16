@@ -310,7 +310,13 @@
     { key: "origin", label: "Location", align: "left" },
   ];
   const DEFAULT_SORT_STATE = { key: "tiles", direction: "desc" };
-  function buildViewContent(leaf, snapshot, requestRender, existingContainer) {
+  function buildViewContent(
+    leaf,
+    snapshot,
+    requestRender,
+    existingContainer,
+    lifecycle,
+  ) {
     const view = leaf.view;
     const sortState = ensureSortState(leaf, view);
     const handleSort = (key) => {
@@ -333,6 +339,7 @@
           sortState,
           onSort: handleSort,
           existingContainer,
+          lifecycle,
         });
       case "clanmates":
         return renderClanView({
@@ -342,6 +349,7 @@
           sortState,
           onSort: handleSort,
           existingContainer,
+          lifecycle,
         });
       case "teams":
         return renderTeamView({
@@ -351,6 +359,7 @@
           sortState,
           onSort: handleSort,
           existingContainer,
+          lifecycle,
         });
       case "ships":
         return renderShipView({
@@ -360,6 +369,7 @@
           sortState,
           onSort: handleSort,
           existingContainer,
+          lifecycle,
         });
       case "landmasses":
         return renderLandmassView({
@@ -369,6 +379,7 @@
           sortState,
           onSort: handleSort,
           existingContainer,
+          lifecycle,
         });
       default:
         return createElement(
@@ -567,13 +578,18 @@
     return container;
   }
   function renderLandmassView(options) {
-    const { leaf, snapshot, sortState, onSort, existingContainer } = options;
+    const { leaf, snapshot, sortState, onSort, existingContainer, lifecycle } =
+      options;
+    lifecycle?.onLandmassMount?.();
     const { container, tbody } = createTableShell({
       sortState,
       onSort,
       existingContainer,
       view: leaf.view,
       headers: LANDMASS_HEADERS,
+    });
+    lifecycle?.registerCleanup?.(() => {
+      lifecycle.onLandmassUnmount?.();
     });
     const playerLookup = new Map(
       snapshot.players.map((player) => [player.id, player]),
@@ -1626,6 +1642,7 @@
   }
   class SidebarApp {
     constructor(store) {
+      this.activeLandmassLeaves = new Set();
       this.overlayElements = new Map();
       this.handleOverlayRealign = () => this.repositionGameOverlay();
       this.store = store;
@@ -1635,10 +1652,7 @@
       this.layoutContainer = this.sidebar.querySelector(
         "[data-sidebar-layout]",
       );
-      this.rootNode = createGroup("horizontal", [
-        createLeaf("players"),
-        createLeaf("clanmates"),
-      ]);
+      this.rootNode = createLeaf("clanmates");
       this.renderLayout();
       this.store.subscribe((snapshot) => {
         this.snapshot = snapshot;
@@ -2081,9 +2095,10 @@
       this.renderLayout();
     }
     closeLeaf(leaf) {
+      this.cleanupLeafView(leaf);
       const parentInfo = this.findParent(leaf);
       if (!parentInfo) {
-        this.rootNode = createLeaf("players");
+        this.rootNode = createLeaf("clanmates");
         this.renderLayout();
         return;
       }
@@ -2091,7 +2106,7 @@
       parent.children.splice(index, 1);
       parent.sizes.splice(index, 1);
       if (parent.children.length === 0) {
-        this.rootNode = createLeaf("players");
+        this.rootNode = createLeaf("clanmates");
       } else if (parent.children.length === 1) {
         this.replaceNode(parent, parent.children[0]);
       } else {
@@ -2148,17 +2163,40 @@
       }
       const previousContainer =
         leaf.contentContainer ?? element.body.firstElementChild;
+      const previousCleanup = leaf.viewCleanup;
       const previousScrollTop =
         leaf.scrollTop ?? previousContainer?.scrollTop ?? 0;
       const previousScrollLeft =
         leaf.scrollLeft ?? previousContainer?.scrollLeft ?? 0;
+      const lifecycle = this.createViewLifecycle(leaf);
       const nextContainer = buildViewContent(
         leaf,
         this.snapshot,
         () => this.refreshLeafContent(leaf),
         previousContainer ?? undefined,
+        lifecycle.callbacks,
       );
-      if (!previousContainer || nextContainer !== previousContainer) {
+      const replaced =
+        !!previousContainer && nextContainer !== previousContainer;
+      if (replaced) {
+        if (previousCleanup) {
+          previousCleanup();
+        }
+        this.setLeafLandmassActive(leaf, false);
+      }
+      const newCleanup = lifecycle.getCleanup();
+      if (newCleanup) {
+        leaf.viewCleanup = newCleanup;
+      } else if (!replaced) {
+        leaf.viewCleanup = previousCleanup;
+      } else {
+        leaf.viewCleanup = undefined;
+      }
+      if (
+        !previousContainer ||
+        nextContainer !== previousContainer ||
+        nextContainer.parentElement !== element.body
+      ) {
         element.body.replaceChildren(nextContainer);
       }
       leaf.contentContainer = nextContainer;
@@ -2172,6 +2210,43 @@
         leaf.scrollTop = 0;
         leaf.scrollLeft = 0;
       }
+    }
+    createViewLifecycle(leaf) {
+      let cleanup;
+      const callbacks = {
+        onLandmassMount: () => this.setLeafLandmassActive(leaf, true),
+        onLandmassUnmount: () => this.setLeafLandmassActive(leaf, false),
+        registerCleanup: (fn) => {
+          cleanup = fn;
+        },
+      };
+      return {
+        callbacks,
+        getCleanup: () => cleanup,
+      };
+    }
+    setLeafLandmassActive(leaf, active) {
+      const isActive = this.activeLandmassLeaves.has(leaf.id);
+      if (active) {
+        if (isActive) {
+          return;
+        }
+        this.activeLandmassLeaves.add(leaf.id);
+      } else {
+        if (!isActive) {
+          return;
+        }
+        this.activeLandmassLeaves.delete(leaf.id);
+      }
+      this.store.setLandmassTrackingEnabled(this.activeLandmassLeaves.size > 0);
+    }
+    cleanupLeafView(leaf) {
+      const cleanup = leaf.viewCleanup;
+      leaf.viewCleanup = undefined;
+      if (cleanup) {
+        cleanup();
+      }
+      this.setLeafLandmassActive(leaf, false);
     }
     bindLeafContainerInteractions(leaf, container) {
       if (leaf.hoveredRowElement && !leaf.hoveredRowElement.isConnected) {
@@ -2225,6 +2300,7 @@
   }
 
   const TICK_MILLISECONDS = 100;
+  const LANDMASS_REFRESH_INTERVAL_TICKS = 50;
   class DataStore {
     constructor(initialSnapshot) {
       this.listeners = new Set();
@@ -2234,6 +2310,8 @@
       this.shipOrigins = new Map();
       this.shipDestinations = new Map();
       this.shipManifests = new Map();
+      this.landmassCache = null;
+      this.landmassTrackingEnabled = false;
       this.snapshot = initialSnapshot ?? {
         players: [],
         allianceDurationMs: 0,
@@ -2264,6 +2342,26 @@
       };
       this.notify();
     }
+    setLandmassTrackingEnabled(enabled) {
+      if (this.landmassTrackingEnabled === enabled) {
+        return;
+      }
+      this.landmassTrackingEnabled = enabled;
+      if (!enabled) {
+        this.landmassCache = null;
+        if (this.snapshot.landmasses.length > 0) {
+          this.snapshot = {
+            ...this.snapshot,
+            landmasses: [],
+          };
+          this.notify();
+        }
+        return;
+      }
+      if (this.game) {
+        this.refreshFromGame();
+      }
+    }
     notify() {
       for (const listener of this.listeners) {
         listener(this.snapshot);
@@ -2280,6 +2378,7 @@
         const discovered = this.findLiveGame();
         if (discovered) {
           this.game = discovered;
+          this.landmassCache = null;
           this.refreshFromGame();
           if (this.attachHandle !== undefined) {
             window.clearTimeout(this.attachHandle);
@@ -2323,7 +2422,8 @@
       try {
         const players = this.game.playerViews();
         this.captureAllianceChanges(players);
-        const currentTimeMs = this.game.ticks() * TICK_MILLISECONDS;
+        const currentTick = this.game.ticks();
+        const currentTimeMs = currentTick * TICK_MILLISECONDS;
         const allianceDurationMs =
           this.game.config().allianceDuration() * TICK_MILLISECONDS;
         const localPlayer = this.resolveLocalPlayer();
@@ -2331,7 +2431,9 @@
           this.createPlayerRecord(player, currentTimeMs, localPlayer),
         );
         const ships = this.createShipRecords();
-        const landmasses = this.createLandmassRecords();
+        const landmasses = this.landmassTrackingEnabled
+          ? this.resolveLandmassRecords(currentTick)
+          : [];
         this.snapshot = {
           players: records,
           allianceDurationMs,
@@ -2344,6 +2446,7 @@
         // If the game context changes while we're reading from it, try attaching again.
         console.warn("Failed to refresh sidebar data", error);
         this.game = null;
+        this.landmassCache = null;
         if (this.refreshHandle !== undefined) {
           window.clearInterval(this.refreshHandle);
           this.refreshHandle = undefined;
@@ -2355,7 +2458,7 @@
       if (!this.game) {
         return [];
       }
-      const units = this.game.units();
+      const units = this.game.units("Transport", "Trade Ship", "Warship");
       const ships = [];
       for (const unit of units) {
         const type = this.normalizeShipType(unit.type());
@@ -2367,6 +2470,23 @@
       ships.sort((a, b) => a.ownerName.localeCompare(b.ownerName));
       this.pruneStaleShipMemory(new Set(ships.map((ship) => ship.id)));
       return ships;
+    }
+    resolveLandmassRecords(currentTick) {
+      if (!this.game) {
+        this.landmassCache = null;
+        return [];
+      }
+      const cache = this.landmassCache;
+      if (
+        cache &&
+        cache.tick <= currentTick &&
+        currentTick - cache.tick < LANDMASS_REFRESH_INTERVAL_TICKS
+      ) {
+        return cache.records;
+      }
+      const records = this.createLandmassRecords();
+      this.landmassCache = { tick: currentTick, records };
+      return records;
     }
     createLandmassRecords() {
       if (!this.game) {
@@ -2418,13 +2538,14 @@
         return null;
       }
       const queue = [startRef];
+      let index = 0;
       visited.add(startRef);
       let tiles = 0;
       let anchorRef = startRef;
       let anchorX = this.game.x(startRef);
       let anchorY = this.game.y(startRef);
-      while (queue.length > 0) {
-        const ref = queue.shift();
+      while (index < queue.length) {
+        const ref = queue[index++];
         if (!this.isTileOwnedBy(ref, ownerSmallId)) {
           continue;
         }
@@ -2621,10 +2742,11 @@
       const start = unit.tile();
       const visited = new Set([start]);
       const queue = [start];
+      let index = 0;
       const ownerSmallId = this.safePlayerSmallId(unit.owner());
       const maxExplored = 4096;
-      while (queue.length > 0 && visited.size <= maxExplored) {
-        const current = queue.shift();
+      while (index < queue.length && visited.size <= maxExplored) {
+        const current = queue[index++];
         const neighbors = this.game.neighbors(current) ?? [];
         for (const neighbor of neighbors) {
           if (visited.has(neighbor)) {
