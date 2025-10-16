@@ -589,7 +589,7 @@
       headers: LANDMASS_HEADERS,
     });
     lifecycle?.registerCleanup?.(() => {
-      lifecycle?.onLandmassUnmount?.();
+      lifecycle.onLandmassUnmount?.();
     });
     const playerLookup = new Map(
       snapshot.players.map((player) => [player.id, player]),
@@ -1642,6 +1642,7 @@
   }
   class SidebarApp {
     constructor(store) {
+      this.activeLandmassLeaves = new Set();
       this.overlayElements = new Map();
       this.handleOverlayRealign = () => this.repositionGameOverlay();
       this.store = store;
@@ -1655,7 +1656,6 @@
         createLeaf("players"),
         createLeaf("clanmates"),
       ]);
-      this.activeLandmassLeaves = new Set();
       this.renderLayout();
       this.store.subscribe((snapshot) => {
         this.snapshot = snapshot;
