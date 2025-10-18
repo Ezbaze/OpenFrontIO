@@ -134,11 +134,13 @@ interface ContextMenuItem {
   label: string;
   onSelect?: () => void;
   disabled?: boolean;
+  tooltip?: string;
 }
 
 interface ShowContextMenuOptions {
   x: number;
   y: number;
+  title?: string;
   items: ContextMenuItem[];
 }
 
@@ -149,12 +151,13 @@ function ensureContextMenuElement(): HTMLDivElement {
   if (!contextMenuElement) {
     contextMenuElement = createElement(
       "div",
-      "fixed z-[100000] min-w-[160px] overflow-hidden rounded-md border " +
+      "fixed z-[2147483647] min-w-[160px] overflow-hidden rounded-md border " +
         "border-slate-700/80 bg-slate-950/95 text-sm text-slate-100 shadow-2xl " +
         "backdrop-blur",
     );
     contextMenuElement.dataset.sidebarRole = "context-menu";
     contextMenuElement.style.pointerEvents = "auto";
+    contextMenuElement.style.zIndex = "2147483647";
   }
 
   return contextMenuElement;
@@ -172,7 +175,7 @@ export function hideContextMenu(): void {
 }
 
 export function showContextMenu(options: ShowContextMenuOptions): void {
-  const { x, y, items } = options;
+  const { x, y, title, items } = options;
   if (!items.length) {
     hideContextMenu();
     return;
@@ -182,12 +185,25 @@ export function showContextMenu(options: ShowContextMenuOptions): void {
 
   const menu = ensureContextMenuElement();
   menu.className =
-    "fixed z-[100000] min-w-[160px] overflow-hidden rounded-md border " +
+    "fixed z-[2147483647] min-w-[160px] overflow-hidden rounded-md border " +
     "border-slate-700/80 bg-slate-950/95 text-sm text-slate-100 shadow-2xl " +
     "backdrop-blur";
+  menu.style.zIndex = "2147483647";
   menu.style.visibility = "hidden";
   menu.style.left = "0px";
   menu.style.top = "0px";
+
+  const wrapper = createElement("div", "flex flex-col");
+
+  if (title) {
+    const header = createElement(
+      "div",
+      "border-b border-slate-800/80 px-3 py-2 text-xs font-semibold uppercase " +
+        "tracking-wide text-slate-300",
+      title,
+    );
+    wrapper.appendChild(header);
+  }
 
   const list = createElement("div", "py-1");
   for (const item of items) {
@@ -202,6 +218,9 @@ export function showContextMenu(options: ShowContextMenuOptions): void {
     );
     button.type = "button";
     button.disabled = Boolean(item.disabled);
+    if (item.tooltip) {
+      button.title = item.tooltip;
+    }
     button.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
@@ -220,7 +239,8 @@ export function showContextMenu(options: ShowContextMenuOptions): void {
     return;
   }
 
-  menu.replaceChildren(list);
+  wrapper.appendChild(list);
+  menu.replaceChildren(wrapper);
   document.body.appendChild(menu);
 
   const rect = menu.getBoundingClientRect();

@@ -11,7 +11,11 @@ import {
   ViewType,
 } from "./types";
 import { clamp, createElement } from "./utils";
-import { buildViewContent, ViewLifecycleCallbacks } from "./views";
+import {
+  buildViewContent,
+  ViewActionHandlers,
+  ViewLifecycleCallbacks,
+} from "./views";
 
 const VIEW_OPTIONS: { value: ViewType; label: string }[] = [
   { value: "players", label: "Players" },
@@ -121,6 +125,7 @@ export class SidebarApp {
   private overlayObserver?: MutationObserver;
   private overlayResizeObserver?: ResizeObserver;
   private readonly handleOverlayRealign = () => this.repositionGameOverlay();
+  private readonly viewActions: ViewActionHandlers;
 
   constructor(store: DataStore) {
     this.store = store;
@@ -131,6 +136,10 @@ export class SidebarApp {
       "[data-sidebar-layout]",
     ) as HTMLElement;
     this.rootNode = createLeaf("clanmates");
+    this.viewActions = {
+      toggleTrading: (playerIds, stopped) =>
+        this.store.setTradingStopped(playerIds, stopped),
+    };
     this.renderLayout();
     this.store.subscribe((snapshot) => {
       this.snapshot = snapshot;
@@ -723,6 +732,7 @@ export class SidebarApp {
       () => this.refreshLeafContent(leaf),
       previousContainer ?? undefined,
       lifecycle.callbacks,
+      this.viewActions,
     );
     const replaced = !!previousContainer && nextContainer !== previousContainer;
     if (replaced) {
