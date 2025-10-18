@@ -176,7 +176,7 @@
     }
   }
   function showContextMenu(options) {
-    const { x, y, items } = options;
+    const { x, y, title, items } = options;
     if (!items.length) {
       hideContextMenu();
       return;
@@ -191,6 +191,16 @@
     menu.style.visibility = "hidden";
     menu.style.left = "0px";
     menu.style.top = "0px";
+    const wrapper = createElement("div", "flex flex-col");
+    if (title) {
+      const header = createElement(
+        "div",
+        "border-b border-slate-800/80 px-3 py-2 text-xs font-semibold uppercase " +
+          "tracking-wide text-slate-300",
+        title,
+      );
+      wrapper.appendChild(header);
+    }
     const list = createElement("div", "py-1");
     for (const item of items) {
       const button = createElement(
@@ -204,6 +214,9 @@
       );
       button.type = "button";
       button.disabled = Boolean(item.disabled);
+      if (item.tooltip) {
+        button.title = item.tooltip;
+      }
       button.addEventListener("click", (event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -220,7 +233,8 @@
       hideContextMenu();
       return;
     }
-    menu.replaceChildren(list);
+    wrapper.appendChild(list);
+    menu.replaceChildren(wrapper);
     document.body.appendChild(menu);
     const rect = menu.getBoundingClientRect();
     const maxLeft = window.innerWidth - rect.width - 8;
@@ -1013,16 +1027,18 @@
         event.stopPropagation();
         const nextStopped = !target.tradeStopped;
         const disabled = target.isSelf;
-        const baseLabel = target.tradeStopped
-          ? `Start trading with ${target.name}`
-          : `Stop trading with ${target.name}`;
+        const actionLabel = nextStopped ? "Stop trading" : "Start trading";
         showContextMenu({
           x: event.clientX,
           y: event.clientY,
+          title: target.name,
           items: [
             {
-              label: disabled ? `${baseLabel} (unavailable)` : baseLabel,
+              label: actionLabel,
               disabled,
+              tooltip: disabled
+                ? "You cannot toggle trading with yourself."
+                : undefined,
               onSelect: disabled
                 ? undefined
                 : () => activeActions.toggleTrading([target.id], nextStopped),
@@ -1041,10 +1057,12 @@
         showContextMenu({
           x: event.clientX,
           y: event.clientY,
+          title: target.label,
           items: [
             {
-              label: `Stop trading with ${target.label}`,
+              label: "Stop trading",
               disabled: true,
+              tooltip: "No eligible players in this group.",
             },
           ],
         });
@@ -1060,11 +1078,10 @@
       showContextMenu({
         x: event.clientX,
         y: event.clientY,
+        title: target.label,
         items: [
           {
-            label: allStopped
-              ? `Start trading with ${target.label}`
-              : `Stop trading with ${target.label}`,
+            label: nextStopped ? "Stop trading" : "Start trading",
             onSelect: () => activeActions.toggleTrading(ids, nextStopped),
           },
         ],

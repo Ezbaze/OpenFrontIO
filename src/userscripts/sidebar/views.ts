@@ -876,16 +876,18 @@ function registerContextMenuDelegation(
       event.stopPropagation();
       const nextStopped = !target.tradeStopped;
       const disabled = target.isSelf;
-      const baseLabel = target.tradeStopped
-        ? `Start trading with ${target.name}`
-        : `Stop trading with ${target.name}`;
+      const actionLabel = nextStopped ? "Stop trading" : "Start trading";
       showContextMenu({
         x: event.clientX,
         y: event.clientY,
+        title: target.name,
         items: [
           {
-            label: disabled ? `${baseLabel} (unavailable)` : baseLabel,
+            label: actionLabel,
             disabled,
+            tooltip: disabled
+              ? "You cannot toggle trading with yourself."
+              : undefined,
             onSelect: disabled
               ? undefined
               : () => activeActions.toggleTrading([target.id], nextStopped),
@@ -907,10 +909,12 @@ function registerContextMenuDelegation(
       showContextMenu({
         x: event.clientX,
         y: event.clientY,
+        title: target.label,
         items: [
           {
-            label: `Stop trading with ${target.label}`,
+            label: "Stop trading",
             disabled: true,
+            tooltip: "No eligible players in this group.",
           },
         ],
       });
@@ -925,11 +929,10 @@ function registerContextMenuDelegation(
     showContextMenu({
       x: event.clientX,
       y: event.clientY,
+      title: target.label,
       items: [
         {
-          label: allStopped
-            ? `Start trading with ${target.label}`
-            : `Stop trading with ${target.label}`,
+          label: nextStopped ? "Stop trading" : "Start trading",
           onSelect: () => activeActions.toggleTrading(ids, nextStopped),
         },
       ],
