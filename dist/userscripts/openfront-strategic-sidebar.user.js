@@ -2529,10 +2529,11 @@
         );
         return;
       }
+      const selfId = this.resolveSelfId(localPlayer);
       const uniqueIds = new Set(targetPlayerIds);
       const targets = [];
       for (const id of uniqueIds) {
-        if (this.isSamePlayer(localPlayer, id)) {
+        if (selfId !== null && id === selfId) {
           continue;
         }
         const resolved = this.resolvePlayerById(id);
@@ -2541,6 +2542,30 @@
         }
       }
       if (targets.length === 0) {
+        return;
+      }
+      const panel = this.resolvePlayerPanel();
+      const handler = stopped
+        ? panel?.handleEmbargoClick
+        : panel?.handleStopEmbargoClick;
+      if (panel && typeof handler === "function") {
+        for (const target of targets) {
+          try {
+            handler.call(
+              panel,
+              new MouseEvent("click", { bubbles: false, cancelable: true }),
+              localPlayer,
+              target,
+            );
+          } catch (error) {
+            console.warn(
+              "Sidebar trading toggle failed via player panel",
+              this.describePlayerForLog(target),
+              error,
+            );
+          }
+        }
+        this.refreshFromGame();
         return;
       }
       if (stopped) {
@@ -2583,6 +2608,26 @@
         }
       }
       this.refreshFromGame();
+    }
+    resolvePlayerPanel() {
+      if (typeof document === "undefined") {
+        return null;
+      }
+      const element = document.querySelector("player-panel");
+      return element ?? null;
+    }
+    resolveSelfId(localPlayer) {
+      if (localPlayer) {
+        try {
+          return String(localPlayer.id());
+        } catch (error) {
+          console.warn("Failed to read local player id", error);
+        }
+      }
+      const snapshotSelf = this.snapshot.players.find(
+        (player) => player.isSelf,
+      );
+      return snapshotSelf?.id ?? null;
     }
     notify() {
       for (const listener of this.listeners) {

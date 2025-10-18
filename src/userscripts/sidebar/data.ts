@@ -92,6 +92,18 @@ interface GameViewLike {
 }
 
 type GameAwareElement = Element & { g?: GameViewLike; game?: GameViewLike };
+type PlayerPanelElement = Element & {
+  handleEmbargoClick?: (
+    event: Event,
+    myPlayer: PlayerViewLike,
+    other: PlayerViewLike,
+  ) => void;
+  handleStopEmbargoClick?: (
+    event: Event,
+    myPlayer: PlayerViewLike,
+    other: PlayerViewLike,
+  ) => void;
+};
 
 type AllianceMap = Map<string, Set<string>>;
 type TraitorHistory = Map<string, Set<string>>;
@@ -186,10 +198,11 @@ export class DataStore {
       return;
     }
 
+    const selfId = this.resolveSelfId(localPlayer);
     const uniqueIds = new Set(targetPlayerIds);
     const targets: PlayerViewLike[] = [];
     for (const id of uniqueIds) {
-      if (this.isSamePlayer(localPlayer, id)) {
+      if (selfId !== null && id === selfId) {
         continue;
       }
       const resolved = this.resolvePlayerById(id);
@@ -199,6 +212,31 @@ export class DataStore {
     }
 
     if (targets.length === 0) {
+      return;
+    }
+
+    const panel = this.resolvePlayerPanel();
+    const handler = stopped
+      ? panel?.handleEmbargoClick
+      : panel?.handleStopEmbargoClick;
+    if (panel && typeof handler === "function") {
+      for (const target of targets) {
+        try {
+          handler.call(
+            panel,
+            new MouseEvent("click", { bubbles: false, cancelable: true }),
+            localPlayer,
+            target,
+          );
+        } catch (error) {
+          console.warn(
+            "Sidebar trading toggle failed via player panel",
+            this.describePlayerForLog(target),
+            error,
+          );
+        }
+      }
+      this.refreshFromGame();
       return;
     }
 
@@ -243,6 +281,30 @@ export class DataStore {
     }
 
     this.refreshFromGame();
+  }
+
+  private resolvePlayerPanel(): PlayerPanelElement | null {
+    if (typeof document === "undefined") {
+      return null;
+    }
+
+    const element = document.querySelector(
+      "player-panel",
+    ) as PlayerPanelElement | null;
+    return element ?? null;
+  }
+
+  private resolveSelfId(localPlayer: PlayerViewLike | null): string | null {
+    if (localPlayer) {
+      try {
+        return String(localPlayer.id());
+      } catch (error) {
+        console.warn("Failed to read local player id", error);
+      }
+    }
+
+    const snapshotSelf = this.snapshot.players.find((player) => player.isSelf);
+    return snapshotSelf?.id ?? null;
   }
 
   private notify(): void {
