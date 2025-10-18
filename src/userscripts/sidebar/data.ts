@@ -242,10 +242,10 @@ export class DataStore {
         this.game.config().allianceDuration() * TICK_MILLISECONDS;
 
       const localPlayer = this.resolveLocalPlayer();
+      const ships = this.createShipRecords();
       const records = players.map((player) =>
         this.createPlayerRecord(player, currentTimeMs, localPlayer),
       );
-      const ships = this.createShipRecords();
       const landmasses = this.landmassTrackingEnabled
         ? this.resolveLandmassRecords(currentTick)
         : [];
@@ -834,7 +834,7 @@ export class DataStore {
     return attacks.map((attack) => ({
       id: attack.id,
       from: this.resolveNameBySmallId(attack.attackerID),
-      troops: attack.troops,
+      troops: this.resolveAttackTroops(attack),
     }));
   }
 
@@ -842,8 +842,17 @@ export class DataStore {
     return attacks.map((attack) => ({
       id: attack.id,
       target: this.resolveNameBySmallId(attack.targetID),
-      troops: attack.troops,
+      troops: this.resolveAttackTroops(attack),
     }));
+  }
+
+  private resolveAttackTroops(attack: AttackUpdateLike): number {
+    if (attack.troops > 0) {
+      return attack.troops;
+    }
+
+    const manifest = this.shipManifests.get(String(attack.id));
+    return manifest ?? attack.troops;
   }
 
   private mapActiveAlliances(player: PlayerViewLike): AlliancePact[] {
