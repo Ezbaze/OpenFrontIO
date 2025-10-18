@@ -281,6 +281,81 @@
     }, 0);
   }
 
+  const tradingContextStates = new WeakMap();
+  function ensureTradingContextMenu(tbody, interactions) {
+    let state = tradingContextStates.get(tbody);
+    if (!state) {
+      state = {
+        targets: new WeakMap(),
+        interactions,
+      };
+      tradingContextStates.set(tbody, state);
+      const stateRef = state;
+      tbody.addEventListener(
+        "contextmenu",
+        (event) => {
+          const row = event.target?.closest("tr");
+          if (!row) {
+            return;
+          }
+          const target = stateRef.targets.get(row);
+          if (!target) {
+            return;
+          }
+          event.preventDefault();
+          event.stopPropagation();
+          const items = buildTradingMenuItems(
+            target,
+            stateRef.interactions?.toggleTrading,
+          );
+          showContextMenu({
+            x: event.clientX,
+            y: event.clientY,
+            items,
+          });
+        },
+        true,
+      );
+    }
+    state.interactions = interactions;
+    return (row, target) => {
+      state.targets.set(row, target);
+    };
+  }
+  function buildTradingMenuItems(target, toggleTrading) {
+    if (target.kind === "player") {
+      const tradeStopped = target.tradeStopped;
+      const disabled = !toggleTrading;
+      return [
+        {
+          label: tradeStopped ? "Start trading" : "Stop trading",
+          disabled,
+          onSelect:
+            disabled || !toggleTrading
+              ? undefined
+              : () => toggleTrading(target.playerIds, !tradeStopped),
+        },
+      ];
+    }
+    const labelSuffix =
+      target.playerIds.length > 0
+        ? target.groupType === "team"
+          ? " with team"
+          : " with clan"
+        : "";
+    const disabled = target.playerIds.length === 0 || !toggleTrading;
+    const allStopped = target.allStopped;
+    return [
+      {
+        label: `${allStopped ? "Start" : "Stop"} trading${labelSuffix}`,
+        disabled,
+        onSelect:
+          disabled || !toggleTrading
+            ? undefined
+            : () => toggleTrading(target.playerIds, !allStopped),
+      },
+    ];
+  }
   const TABLE_HEADERS = [
     { key: "label", label: "Clan / Player", align: "left" },
     { key: "tiles", label: "Tiles", align: "right" },
@@ -318,6 +393,7 @@
     requestRender,
     existingContainer,
     lifecycle,
+    interactions,
   ) {
     const view = leaf.view;
     const sortState = ensureSortState(leaf, view);
@@ -342,6 +418,7 @@
           onSort: handleSort,
           existingContainer,
           lifecycle,
+          interactions,
         });
       case "clanmates":
         return renderClanView({
@@ -352,6 +429,7 @@
           onSort: handleSort,
           existingContainer,
           lifecycle,
+          interactions,
         });
       case "teams":
         return renderTeamView({
@@ -362,6 +440,7 @@
           onSort: handleSort,
           existingContainer,
           lifecycle,
+          interactions,
         });
       case "ships":
         return renderShipView({
@@ -372,6 +451,7 @@
           onSort: handleSort,
           existingContainer,
           lifecycle,
+          interactions,
         });
       case "landmasses":
         return renderLandmassView({
@@ -382,6 +462,7 @@
           onSort: handleSort,
           existingContainer,
           lifecycle,
+          interactions,
         });
       default:
         return createElement(
@@ -422,6 +503,7 @@
       sortState,
       onSort,
       existingContainer,
+      interactions,
     } = options;
     const metricsCache = new Map();
     const { container, tbody } = createTableShell({
@@ -431,6 +513,10 @@
       view: leaf.view,
       headers: TABLE_HEADERS,
     });
+    const registerTradingContext = ensureTradingContextMenu(
+      tbody,
+      interactions,
+    );
     const players = [...snapshot.players].sort((a, b) =>
       comparePlayers({ a, b, sortState, snapshot, metricsCache }),
     );
@@ -443,6 +529,8 @@
         tbody,
         requestRender,
         metricsCache,
+        interactions,
+        registerTradingContext,
       });
     }
     return container;
@@ -455,6 +543,7 @@
       sortState,
       onSort,
       existingContainer,
+      interactions,
     } = options;
     const metricsCache = new Map();
     const { container, tbody } = createTableShell({
@@ -464,6 +553,10 @@
       view: leaf.view,
       headers: TABLE_HEADERS,
     });
+    const registerTradingContext = ensureTradingContextMenu(
+      tbody,
+      interactions,
+    );
     const groups = groupPlayers({
       players: snapshot.players,
       snapshot,
@@ -480,6 +573,8 @@
         requestRender,
         groupType: "clan",
         metricsCache,
+        interactions,
+        registerTradingContext,
       });
     }
     return container;
@@ -492,6 +587,7 @@
       sortState,
       onSort,
       existingContainer,
+      interactions,
     } = options;
     const metricsCache = new Map();
     const { container, tbody } = createTableShell({
@@ -501,6 +597,10 @@
       view: leaf.view,
       headers: TABLE_HEADERS,
     });
+    const registerTradingContext = ensureTradingContextMenu(
+      tbody,
+      interactions,
+    );
     const groups = groupPlayers({
       players: snapshot.players,
       snapshot,
@@ -517,6 +617,8 @@
         requestRender,
         groupType: "team",
         metricsCache,
+        interactions,
+        registerTradingContext,
       });
     }
     return container;
@@ -948,6 +1050,7 @@
       requestRender,
       metricsCache,
     } = options;
+    const { registerTradingContext } = options;
     const metrics = getMetrics(player, snapshot, metricsCache);
     const rowKey = player.id;
     const expanded = leaf.expandedRows.has(rowKey);
@@ -955,21 +1058,11 @@
     tr.dataset.rowKey = rowKey;
     applyPersistentHover(tr, leaf, rowKey, "bg-slate-800/50");
     if (!player.isSelf) {
-      const handleContextMenu = (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        const tradeStopped = player.tradeStopped ?? false;
-        showContextMenu({
-          x: event.clientX,
-          y: event.clientY,
-          items: [
-            {
-              label: tradeStopped ? "Start trading" : "Stop trading",
-            },
-          ],
-        });
-      };
-      tr.addEventListener("contextmenu", handleContextMenu, { capture: true });
+      registerTradingContext?.(tr, {
+        kind: "player",
+        playerIds: [player.id],
+        tradeStopped: player.tradeStopped ?? false,
+      });
     }
     const firstCell = createElement(
       "td",
@@ -1020,6 +1113,8 @@
       requestRender,
       groupType,
       metricsCache,
+      interactions,
+      registerTradingContext,
     } = options;
     const groupKey = `${groupType}:${group.key}`;
     const expanded = leaf.expandedGroups.has(groupKey);
@@ -1029,6 +1124,19 @@
     );
     row.dataset.groupKey = groupKey;
     applyPersistentHover(row, leaf, groupKey, "bg-slate-800/60");
+    const actionablePlayers = group.players.filter((player) => !player.isSelf);
+    const actionableIds = Array.from(
+      new Set(actionablePlayers.map((p) => p.id)),
+    );
+    const allStopped =
+      actionableIds.length > 0 &&
+      actionablePlayers.every((player) => player.tradeStopped ?? false);
+    registerTradingContext?.(row, {
+      kind: "group",
+      playerIds: actionableIds,
+      groupType,
+      allStopped,
+    });
     const firstCell = createElement(
       "td",
       "border-b border-r border-slate-800 border-slate-900/80 px-3 py-2 align-top last:border-r-0",
@@ -1064,6 +1172,8 @@
           tbody,
           requestRender,
           metricsCache,
+          interactions,
+          registerTradingContext,
         });
       }
     }
@@ -2177,6 +2287,10 @@
         () => this.refreshLeafContent(leaf),
         previousContainer ?? undefined,
         lifecycle.callbacks,
+        {
+          toggleTrading: (playerIds, stop) =>
+            this.store.setTradingState(playerIds, stop),
+        },
       );
       const replaced =
         !!previousContainer && nextContainer !== previousContainer;
@@ -2307,6 +2421,7 @@
     constructor(initialSnapshot) {
       this.listeners = new Set();
       this.game = null;
+      this.eventBus = null;
       this.previousAlliances = new Map();
       this.traitorHistory = new Map();
       this.shipOrigins = new Map();
@@ -2344,6 +2459,64 @@
       };
       this.notify();
     }
+    setTradingState(playerIds, stop) {
+      if (!this.game) {
+        this.scheduleGameDiscovery(true);
+        return false;
+      }
+      const eventBus = this.resolveEventBus();
+      if (!eventBus) {
+        console.warn(
+          "OpenFront sidebar: unable to locate event bus for trading",
+        );
+        return false;
+      }
+      const EmbargoEvent = this.resolveEmbargoEventConstructor(eventBus);
+      if (!EmbargoEvent) {
+        console.warn(
+          "OpenFront sidebar: unable to locate embargo event constructor",
+        );
+        return false;
+      }
+      const localPlayer = this.resolveLocalPlayer();
+      if (!localPlayer) {
+        console.warn(
+          "OpenFront sidebar: unable to resolve local player for trading",
+        );
+        return false;
+      }
+      const uniqueIds = Array.from(new Set(playerIds.filter(Boolean)));
+      let dispatched = false;
+      for (const playerId of uniqueIds) {
+        let target;
+        try {
+          target = this.game.player(playerId);
+        } catch (error) {
+          console.warn(
+            `Failed to resolve player ${playerId} for trading`,
+            error,
+          );
+          continue;
+        }
+        if (!target) {
+          continue;
+        }
+        if (this.isSamePlayer(localPlayer, String(target.id()))) {
+          continue;
+        }
+        const tradeStopped = this.determineTradeStopped(localPlayer, target);
+        if ((stop && tradeStopped) || (!stop && !tradeStopped)) {
+          continue;
+        }
+        try {
+          eventBus.emit(new EmbargoEvent(target, stop ? "start" : "stop"));
+          dispatched = true;
+        } catch (error) {
+          console.warn("Failed to dispatch trading intent", error);
+        }
+      }
+      return dispatched;
+    }
     setLandmassTrackingEnabled(enabled) {
       if (this.landmassTrackingEnabled === enabled) {
         return;
@@ -2380,6 +2553,7 @@
         const discovered = this.findLiveGame();
         if (discovered) {
           this.game = discovered;
+          this.resolveEventBus();
           this.landmassCache = null;
           this.refreshFromGame();
           if (this.attachHandle !== undefined) {
@@ -2417,10 +2591,53 @@
       }
       return null;
     }
+    findEventBus() {
+      const selectors = [
+        "player-panel",
+        "leader-board",
+        "game-right-sidebar",
+        "control-panel",
+        "events-display",
+      ].join(", ");
+      const candidates = document.querySelectorAll(selectors);
+      for (const element of candidates) {
+        const bus = element.eventBus;
+        if (bus && typeof bus.emit === "function") {
+          return bus;
+        }
+      }
+      return null;
+    }
+    resolveEventBus() {
+      if (this.eventBus) {
+        return this.eventBus;
+      }
+      const discovered = this.findEventBus();
+      if (discovered) {
+        this.eventBus = discovered;
+      }
+      return this.eventBus;
+    }
+    resolveEmbargoEventConstructor(eventBus) {
+      const listeners = eventBus.listeners;
+      if (!listeners) {
+        return null;
+      }
+      for (const ctor of listeners.keys()) {
+        if (
+          typeof ctor === "function" &&
+          ctor.name === "SendEmbargoIntentEvent"
+        ) {
+          return ctor;
+        }
+      }
+      return null;
+    }
     refreshFromGame() {
       if (!this.game) {
         return;
       }
+      this.resolveEventBus();
       try {
         const players = this.game.playerViews();
         this.captureAllianceChanges(players);
@@ -2448,6 +2665,7 @@
         // If the game context changes while we're reading from it, try attaching again.
         console.warn("Failed to refresh sidebar data", error);
         this.game = null;
+        this.eventBus = null;
         this.landmassCache = null;
         if (this.refreshHandle !== undefined) {
           window.clearInterval(this.refreshHandle);

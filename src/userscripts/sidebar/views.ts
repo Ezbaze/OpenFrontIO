@@ -20,6 +20,115 @@ import {
 
 type RequestRender = () => void;
 
+interface ViewInteractions {
+  toggleTrading?: (playerIds: readonly string[], stop: boolean) => void;
+}
+
+type TradingContextTarget =
+  | {
+      kind: "player";
+      playerIds: readonly string[];
+      tradeStopped: boolean;
+    }
+  | {
+      kind: "group";
+      playerIds: readonly string[];
+      groupType: "team" | "clan";
+      allStopped: boolean;
+    };
+
+interface TradingContextState {
+  targets: WeakMap<HTMLElement, TradingContextTarget>;
+  interactions?: ViewInteractions;
+}
+
+const tradingContextStates = new WeakMap<HTMLElement, TradingContextState>();
+
+function ensureTradingContextMenu(
+  tbody: HTMLElement,
+  interactions?: ViewInteractions,
+): (row: HTMLElement, target: TradingContextTarget) => void {
+  let state = tradingContextStates.get(tbody);
+  if (!state) {
+    state = {
+      targets: new WeakMap<HTMLElement, TradingContextTarget>(),
+      interactions,
+    };
+    tradingContextStates.set(tbody, state);
+    const stateRef = state;
+    tbody.addEventListener(
+      "contextmenu",
+      (event) => {
+        const row = (event.target as HTMLElement | null)?.closest("tr");
+        if (!row) {
+          return;
+        }
+        const target = stateRef.targets.get(row);
+        if (!target) {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        const items = buildTradingMenuItems(
+          target,
+          stateRef.interactions?.toggleTrading,
+        );
+        showContextMenu({
+          x: event.clientX,
+          y: event.clientY,
+          items,
+        });
+      },
+      true,
+    );
+  }
+
+  state.interactions = interactions;
+
+  return (row, target) => {
+    state.targets.set(row, target);
+  };
+}
+
+function buildTradingMenuItems(
+  target: TradingContextTarget,
+  toggleTrading?: ViewInteractions["toggleTrading"],
+): Array<{ label: string; disabled?: boolean; onSelect?: () => void }> {
+  if (target.kind === "player") {
+    const tradeStopped = target.tradeStopped;
+    const disabled = !toggleTrading;
+    return [
+      {
+        label: tradeStopped ? "Start trading" : "Stop trading",
+        disabled,
+        onSelect:
+          disabled || !toggleTrading
+            ? undefined
+            : () => toggleTrading(target.playerIds, !tradeStopped),
+      },
+    ];
+  }
+
+  const labelSuffix =
+    target.playerIds.length > 0
+      ? target.groupType === "team"
+        ? " with team"
+        : " with clan"
+      : "";
+  const disabled = target.playerIds.length === 0 || !toggleTrading;
+  const allStopped = target.allStopped;
+  return [
+    {
+      label: `${allStopped ? "Start" : "Stop"} trading${labelSuffix}`,
+      disabled,
+      onSelect:
+        disabled || !toggleTrading
+          ? undefined
+          : () => toggleTrading(target.playerIds, !allStopped),
+    },
+  ];
+}
+
 type Metrics = ReturnType<typeof computePlayerMetrics>;
 
 export interface ViewLifecycleCallbacks {
@@ -87,6 +196,7 @@ export function buildViewContent(
   requestRender: RequestRender,
   existingContainer?: HTMLElement,
   lifecycle?: ViewLifecycleCallbacks,
+  interactions?: ViewInteractions,
 ): HTMLElement {
   const view = leaf.view;
   const sortState = ensureSortState(leaf, view);
@@ -112,6 +222,7 @@ export function buildViewContent(
         onSort: handleSort,
         existingContainer,
         lifecycle,
+        interactions,
       });
     case "clanmates":
       return renderClanView({
@@ -122,6 +233,7 @@ export function buildViewContent(
         onSort: handleSort,
         existingContainer,
         lifecycle,
+        interactions,
       });
     case "teams":
       return renderTeamView({
@@ -132,6 +244,7 @@ export function buildViewContent(
         onSort: handleSort,
         existingContainer,
         lifecycle,
+        interactions,
       });
     case "ships":
       return renderShipView({
@@ -142,6 +255,7 @@ export function buildViewContent(
         onSort: handleSort,
         existingContainer,
         lifecycle,
+        interactions,
       });
     case "landmasses":
       return renderLandmassView({
@@ -152,6 +266,7 @@ export function buildViewContent(
         onSort: handleSort,
         existingContainer,
         lifecycle,
+        interactions,
       });
     default:
       return createElement("div", "text-slate-200 text-sm", "Unsupported view");
@@ -191,6 +306,7 @@ interface ViewRenderOptions {
   onSort: (key: SortKey) => void;
   existingContainer?: HTMLElement;
   lifecycle?: ViewLifecycleCallbacks;
+  interactions?: ViewInteractions;
 }
 
 function renderPlayersView(options: ViewRenderOptions): HTMLElement {
@@ -201,6 +317,7 @@ function renderPlayersView(options: ViewRenderOptions): HTMLElement {
     sortState,
     onSort,
     existingContainer,
+    interactions,
   } = options;
   const metricsCache = new Map<string, Metrics>();
   const { container, tbody } = createTableShell({
@@ -210,6 +327,7 @@ function renderPlayersView(options: ViewRenderOptions): HTMLElement {
     view: leaf.view,
     headers: TABLE_HEADERS,
   });
+  const registerTradingContext = ensureTradingContextMenu(tbody, interactions);
   const players = [...snapshot.players].sort((a, b) =>
     comparePlayers({ a, b, sortState, snapshot, metricsCache }),
   );
@@ -223,6 +341,8 @@ function renderPlayersView(options: ViewRenderOptions): HTMLElement {
       tbody,
       requestRender,
       metricsCache,
+      interactions,
+      registerTradingContext,
     });
   }
 
@@ -237,6 +357,7 @@ function renderClanView(options: ViewRenderOptions): HTMLElement {
     sortState,
     onSort,
     existingContainer,
+    interactions,
   } = options;
   const metricsCache = new Map<string, Metrics>();
   const { container, tbody } = createTableShell({
@@ -246,6 +367,7 @@ function renderClanView(options: ViewRenderOptions): HTMLElement {
     view: leaf.view,
     headers: TABLE_HEADERS,
   });
+  const registerTradingContext = ensureTradingContextMenu(tbody, interactions);
   const groups = groupPlayers({
     players: snapshot.players,
     snapshot,
@@ -263,6 +385,8 @@ function renderClanView(options: ViewRenderOptions): HTMLElement {
       requestRender,
       groupType: "clan",
       metricsCache,
+      interactions,
+      registerTradingContext,
     });
   }
 
@@ -277,6 +401,7 @@ function renderTeamView(options: ViewRenderOptions): HTMLElement {
     sortState,
     onSort,
     existingContainer,
+    interactions,
   } = options;
   const metricsCache = new Map<string, Metrics>();
   const { container, tbody } = createTableShell({
@@ -286,6 +411,7 @@ function renderTeamView(options: ViewRenderOptions): HTMLElement {
     view: leaf.view,
     headers: TABLE_HEADERS,
   });
+  const registerTradingContext = ensureTradingContextMenu(tbody, interactions);
   const groups = groupPlayers({
     players: snapshot.players,
     snapshot,
@@ -303,6 +429,8 @@ function renderTeamView(options: ViewRenderOptions): HTMLElement {
       requestRender,
       groupType: "team",
       metricsCache,
+      interactions,
+      registerTradingContext,
     });
   }
 
@@ -782,9 +910,15 @@ function appendPlayerRows(options: {
   tbody: HTMLElement;
   requestRender: RequestRender;
   metricsCache: Map<string, Metrics>;
+  interactions?: ViewInteractions;
+  registerTradingContext?: (
+    row: HTMLElement,
+    target: TradingContextTarget,
+  ) => void;
 }) {
   const { player, indent, leaf, snapshot, tbody, requestRender, metricsCache } =
     options;
+  const { registerTradingContext } = options;
   const metrics = getMetrics(player, snapshot, metricsCache);
   const rowKey = player.id;
   const expanded = leaf.expandedRows.has(rowKey);
@@ -794,22 +928,11 @@ function appendPlayerRows(options: {
   applyPersistentHover(tr, leaf, rowKey, "bg-slate-800/50");
 
   if (!player.isSelf) {
-    const handleContextMenu = (event: MouseEvent) => {
-      event.preventDefault();
-      event.stopPropagation();
-      const tradeStopped = player.tradeStopped ?? false;
-      showContextMenu({
-        x: event.clientX,
-        y: event.clientY,
-        items: [
-          {
-            label: tradeStopped ? "Start trading" : "Stop trading",
-          },
-        ],
-      });
-    };
-
-    tr.addEventListener("contextmenu", handleContextMenu, { capture: true });
+    registerTradingContext?.(tr, {
+      kind: "player",
+      playerIds: [player.id],
+      tradeStopped: player.tradeStopped ?? false,
+    });
   }
 
   const firstCell = createElement(
@@ -863,6 +986,11 @@ function appendGroupRows(options: {
   requestRender: RequestRender;
   groupType: "clan" | "team";
   metricsCache: Map<string, Metrics>;
+  interactions?: ViewInteractions;
+  registerTradingContext?: (
+    row: HTMLElement,
+    target: TradingContextTarget,
+  ) => void;
 }) {
   const {
     group,
@@ -872,6 +1000,8 @@ function appendGroupRows(options: {
     requestRender,
     groupType,
     metricsCache,
+    interactions,
+    registerTradingContext,
   } = options;
   const groupKey = `${groupType}:${group.key}`;
   const expanded = leaf.expandedGroups.has(groupKey);
@@ -882,6 +1012,19 @@ function appendGroupRows(options: {
   );
   row.dataset.groupKey = groupKey;
   applyPersistentHover(row, leaf, groupKey, "bg-slate-800/60");
+
+  const actionablePlayers = group.players.filter((player) => !player.isSelf);
+  const actionableIds = Array.from(new Set(actionablePlayers.map((p) => p.id)));
+  const allStopped =
+    actionableIds.length > 0 &&
+    actionablePlayers.every((player) => player.tradeStopped ?? false);
+
+  registerTradingContext?.(row, {
+    kind: "group",
+    playerIds: actionableIds,
+    groupType,
+    allStopped,
+  });
 
   const firstCell = createElement(
     "td",
@@ -920,6 +1063,8 @@ function appendGroupRows(options: {
         tbody,
         requestRender,
         metricsCache,
+        interactions,
+        registerTradingContext,
       });
     }
   }

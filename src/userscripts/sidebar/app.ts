@@ -723,6 +723,10 @@ export class SidebarApp {
       () => this.refreshLeafContent(leaf),
       previousContainer ?? undefined,
       lifecycle.callbacks,
+      {
+        toggleTrading: (playerIds, stop) =>
+          this.store.setTradingState(playerIds, stop),
+      },
     );
     const replaced = !!previousContainer && nextContainer !== previousContainer;
     if (replaced) {
