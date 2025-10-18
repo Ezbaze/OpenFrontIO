@@ -921,21 +921,58 @@ function registerContextMenuDelegation(
       return;
     }
 
-    const allStopped = target.players.every(
+    const tradingPlayers = target.players.filter(
+      (player) => !(player.tradeStopped ?? false),
+    );
+    const stoppedPlayers = target.players.filter(
       (player) => player.tradeStopped ?? false,
     );
-    const nextStopped = !allStopped;
-    const ids = Array.from(new Set(target.players.map((player) => player.id)));
+
+    const buildIdList = (players: PlayerRecord[]) =>
+      Array.from(new Set(players.map((player) => player.id)));
+
+    const items = [] as {
+      label: string;
+      onSelect?: () => void;
+      disabled?: boolean;
+      tooltip?: string;
+    }[];
+
+    if (tradingPlayers.length > 0) {
+      const ids = buildIdList(tradingPlayers);
+      items.push({
+        label:
+          tradingPlayers.length === target.players.length
+            ? "Stop trading"
+            : `Stop trading (${tradingPlayers.length})`,
+        onSelect: () => activeActions.toggleTrading(ids, true),
+      });
+    }
+
+    if (stoppedPlayers.length > 0) {
+      const ids = buildIdList(stoppedPlayers);
+      items.push({
+        label:
+          stoppedPlayers.length === target.players.length
+            ? "Start trading"
+            : `Start trading (${stoppedPlayers.length})`,
+        onSelect: () => activeActions.toggleTrading(ids, false),
+      });
+    }
+
+    if (!items.length) {
+      items.push({
+        label: "Stop trading",
+        disabled: true,
+        tooltip: "No eligible players in this group.",
+      });
+    }
+
     showContextMenu({
       x: event.clientX,
       y: event.clientY,
       title: target.label,
-      items: [
-        {
-          label: nextStopped ? "Stop trading" : "Start trading",
-          onSelect: () => activeActions.toggleTrading(ids, nextStopped),
-        },
-      ],
+      items,
     });
   };
 
