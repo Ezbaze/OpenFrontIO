@@ -91,6 +91,16 @@ interface GameViewLike {
 
 type GameAwareElement = Element & { g?: GameViewLike; game?: GameViewLike };
 
+type EventBusLike = {
+  emit: (event: unknown) => void;
+  listeners?: Map<unknown, unknown[]>;
+};
+type EmbargoEventConstructor = new (
+  target: PlayerViewLike,
+  action: "start" | "stop",
+) => unknown;
+type EventBusAwareElement = Element & { eventBus?: EventBusLike | null };
+
 type AllianceMap = Map<string, Set<string>>;
 type TraitorHistory = Map<string, Set<string>>;
 
@@ -100,6 +110,7 @@ export class DataStore {
   private refreshHandle: number | undefined;
   private attachHandle: number | undefined;
   private game: GameViewLike | null = null;
+  private eventBus: EventBusLike | null = null;
   private readonly previousAlliances: AllianceMap = new Map();
   private readonly traitorHistory: TraitorHistory = new Map();
   private readonly shipOrigins: Map<string, TileSummary> = new Map();
@@ -145,6 +156,70 @@ export class DataStore {
     this.notify();
   }
 
+  setTradingState(playerIds: readonly string[], stop: boolean): boolean {
+    if (!this.game) {
+      this.scheduleGameDiscovery(true);
+      return false;
+    }
+
+    const eventBus = this.resolveEventBus();
+    if (!eventBus) {
+      console.warn("OpenFront sidebar: unable to locate event bus for trading");
+      return false;
+    }
+
+    const EmbargoEvent = this.resolveEmbargoEventConstructor(eventBus);
+    if (!EmbargoEvent) {
+      console.warn(
+        "OpenFront sidebar: unable to locate embargo event constructor",
+      );
+      return false;
+    }
+
+    const localPlayer = this.resolveLocalPlayer();
+    if (!localPlayer) {
+      console.warn(
+        "OpenFront sidebar: unable to resolve local player for trading",
+      );
+      return false;
+    }
+
+    const uniqueIds = Array.from(new Set(playerIds.filter(Boolean)));
+    let dispatched = false;
+
+    for (const playerId of uniqueIds) {
+      let target: PlayerViewLike;
+      try {
+        target = this.game.player(playerId as unknown as string);
+      } catch (error) {
+        console.warn(`Failed to resolve player ${playerId} for trading`, error);
+        continue;
+      }
+
+      if (!target) {
+        continue;
+      }
+
+      if (this.isSamePlayer(localPlayer, String(target.id()))) {
+        continue;
+      }
+
+      const tradeStopped = this.determineTradeStopped(localPlayer, target);
+      if ((stop && tradeStopped) || (!stop && !tradeStopped)) {
+        continue;
+      }
+
+      try {
+        eventBus.emit(new EmbargoEvent(target, stop ? "start" : "stop"));
+        dispatched = true;
+      } catch (error) {
+        console.warn("Failed to dispatch trading intent", error);
+      }
+    }
+
+    return dispatched;
+  }
+
   setLandmassTrackingEnabled(enabled: boolean): void {
     if (this.landmassTrackingEnabled === enabled) {
       return;
@@ -188,6 +263,7 @@ export class DataStore {
       const discovered = this.findLiveGame();
       if (discovered) {
         this.game = discovered;
+        this.resolveEventBus();
         this.landmassCache = null;
         this.refreshFromGame();
         if (this.attachHandle !== undefined) {
@@ -228,10 +304,63 @@ export class DataStore {
     return null;
   }
 
+  private findEventBus(): EventBusLike | null {
+    const selectors = [
+      "player-panel",
+      "leader-board",
+      "game-right-sidebar",
+      "control-panel",
+      "events-display",
+    ].join(", ");
+    const candidates: NodeListOf<EventBusAwareElement> =
+      document.querySelectorAll(selectors);
+    for (const element of candidates) {
+      const bus = element.eventBus;
+      if (bus && typeof bus.emit === "function") {
+        return bus;
+      }
+    }
+    return null;
+  }
+
+  private resolveEventBus(): EventBusLike | null {
+    if (this.eventBus) {
+      return this.eventBus;
+    }
+    const discovered = this.findEventBus();
+    if (discovered) {
+      this.eventBus = discovered;
+    }
+    return this.eventBus;
+  }
+
+  private resolveEmbargoEventConstructor(
+    eventBus: EventBusLike,
+  ): EmbargoEventConstructor | null {
+    const listeners = (eventBus as { listeners?: Map<unknown, unknown[]> })
+      .listeners;
+    if (!listeners) {
+      return null;
+    }
+
+    for (const ctor of listeners.keys()) {
+      if (
+        typeof ctor === "function" &&
+        ctor.name === "SendEmbargoIntentEvent"
+      ) {
+        return ctor as EmbargoEventConstructor;
+      }
+    }
+
+    return null;
+  }
+
   private refreshFromGame(): void {
     if (!this.game) {
       return;
     }
+
+    this.resolveEventBus();
 
     try {
       const players = this.game.playerViews();
@@ -262,6 +391,7 @@ export class DataStore {
       // If the game context changes while we're reading from it, try attaching again.
       console.warn("Failed to refresh sidebar data", error);
       this.game = null;
+      this.eventBus = null;
       this.landmassCache = null;
       if (this.refreshHandle !== undefined) {
         window.clearInterval(this.refreshHandle);

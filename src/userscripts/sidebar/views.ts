@@ -20,6 +20,10 @@ import {
 
 type RequestRender = () => void;
 
+interface ViewInteractions {
+  toggleTrading?: (playerIds: readonly string[], stop: boolean) => void;
+}
+
 type Metrics = ReturnType<typeof computePlayerMetrics>;
 
 export interface ViewLifecycleCallbacks {
@@ -87,6 +91,7 @@ export function buildViewContent(
   requestRender: RequestRender,
   existingContainer?: HTMLElement,
   lifecycle?: ViewLifecycleCallbacks,
+  interactions?: ViewInteractions,
 ): HTMLElement {
   const view = leaf.view;
   const sortState = ensureSortState(leaf, view);
@@ -112,6 +117,7 @@ export function buildViewContent(
         onSort: handleSort,
         existingContainer,
         lifecycle,
+        interactions,
       });
     case "clanmates":
       return renderClanView({
@@ -122,6 +128,7 @@ export function buildViewContent(
         onSort: handleSort,
         existingContainer,
         lifecycle,
+        interactions,
       });
     case "teams":
       return renderTeamView({
@@ -132,6 +139,7 @@ export function buildViewContent(
         onSort: handleSort,
         existingContainer,
         lifecycle,
+        interactions,
       });
     case "ships":
       return renderShipView({
@@ -142,6 +150,7 @@ export function buildViewContent(
         onSort: handleSort,
         existingContainer,
         lifecycle,
+        interactions,
       });
     case "landmasses":
       return renderLandmassView({
@@ -152,6 +161,7 @@ export function buildViewContent(
         onSort: handleSort,
         existingContainer,
         lifecycle,
+        interactions,
       });
     default:
       return createElement("div", "text-slate-200 text-sm", "Unsupported view");
@@ -191,6 +201,7 @@ interface ViewRenderOptions {
   onSort: (key: SortKey) => void;
   existingContainer?: HTMLElement;
   lifecycle?: ViewLifecycleCallbacks;
+  interactions?: ViewInteractions;
 }
 
 function renderPlayersView(options: ViewRenderOptions): HTMLElement {
@@ -201,6 +212,7 @@ function renderPlayersView(options: ViewRenderOptions): HTMLElement {
     sortState,
     onSort,
     existingContainer,
+    interactions,
   } = options;
   const metricsCache = new Map<string, Metrics>();
   const { container, tbody } = createTableShell({
@@ -223,6 +235,7 @@ function renderPlayersView(options: ViewRenderOptions): HTMLElement {
       tbody,
       requestRender,
       metricsCache,
+      interactions,
     });
   }
 
@@ -237,6 +250,7 @@ function renderClanView(options: ViewRenderOptions): HTMLElement {
     sortState,
     onSort,
     existingContainer,
+    interactions,
   } = options;
   const metricsCache = new Map<string, Metrics>();
   const { container, tbody } = createTableShell({
@@ -263,6 +277,7 @@ function renderClanView(options: ViewRenderOptions): HTMLElement {
       requestRender,
       groupType: "clan",
       metricsCache,
+      interactions,
     });
   }
 
@@ -277,6 +292,7 @@ function renderTeamView(options: ViewRenderOptions): HTMLElement {
     sortState,
     onSort,
     existingContainer,
+    interactions,
   } = options;
   const metricsCache = new Map<string, Metrics>();
   const { container, tbody } = createTableShell({
@@ -303,6 +319,7 @@ function renderTeamView(options: ViewRenderOptions): HTMLElement {
       requestRender,
       groupType: "team",
       metricsCache,
+      interactions,
     });
   }
 
@@ -782,9 +799,11 @@ function appendPlayerRows(options: {
   tbody: HTMLElement;
   requestRender: RequestRender;
   metricsCache: Map<string, Metrics>;
+  interactions?: ViewInteractions;
 }) {
   const { player, indent, leaf, snapshot, tbody, requestRender, metricsCache } =
     options;
+  const { interactions } = options;
   const metrics = getMetrics(player, snapshot, metricsCache);
   const rowKey = player.id;
   const expanded = leaf.expandedRows.has(rowKey);
@@ -798,12 +817,17 @@ function appendPlayerRows(options: {
       event.preventDefault();
       event.stopPropagation();
       const tradeStopped = player.tradeStopped ?? false;
+      const playerIds = [player.id];
       showContextMenu({
         x: event.clientX,
         y: event.clientY,
         items: [
           {
             label: tradeStopped ? "Start trading" : "Stop trading",
+            disabled: !interactions?.toggleTrading,
+            onSelect: !interactions?.toggleTrading
+              ? undefined
+              : () => interactions.toggleTrading?.(playerIds, !tradeStopped),
           },
         ],
       });
@@ -863,6 +887,7 @@ function appendGroupRows(options: {
   requestRender: RequestRender;
   groupType: "clan" | "team";
   metricsCache: Map<string, Metrics>;
+  interactions?: ViewInteractions;
 }) {
   const {
     group,
@@ -872,6 +897,7 @@ function appendGroupRows(options: {
     requestRender,
     groupType,
     metricsCache,
+    interactions,
   } = options;
   const groupKey = `${groupType}:${group.key}`;
   const expanded = leaf.expandedGroups.has(groupKey);
@@ -882,6 +908,42 @@ function appendGroupRows(options: {
   );
   row.dataset.groupKey = groupKey;
   applyPersistentHover(row, leaf, groupKey, "bg-slate-800/60");
+
+  const handleContextMenu = (event: MouseEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const actionablePlayers = group.players.filter((player) => !player.isSelf);
+    const actionableIds = Array.from(
+      new Set(actionablePlayers.map((p) => p.id)),
+    );
+    const allStopped =
+      actionableIds.length > 0 &&
+      actionablePlayers.every((player) => player.tradeStopped ?? false);
+    const labelSuffix =
+      actionableIds.length > 0
+        ? groupType === "team"
+          ? " with team"
+          : " with clan"
+        : "";
+    const label = `${allStopped ? "Start" : "Stop"} trading${labelSuffix}`;
+
+    showContextMenu({
+      x: event.clientX,
+      y: event.clientY,
+      items: [
+        {
+          label,
+          disabled: actionableIds.length === 0 || !interactions?.toggleTrading,
+          onSelect:
+            actionableIds.length === 0 || !interactions?.toggleTrading
+              ? undefined
+              : () => interactions.toggleTrading?.(actionableIds, !allStopped),
+        },
+      ],
+    });
+  };
+
+  row.addEventListener("contextmenu", handleContextMenu, { capture: true });
 
   const firstCell = createElement(
     "td",
@@ -920,6 +982,7 @@ function appendGroupRows(options: {
         tbody,
         requestRender,
         metricsCache,
+        interactions,
       });
     }
   }

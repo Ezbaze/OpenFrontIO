@@ -316,6 +316,7 @@
     requestRender,
     existingContainer,
     lifecycle,
+    interactions,
   ) {
     const view = leaf.view;
     const sortState = ensureSortState(leaf, view);
@@ -340,6 +341,7 @@
           onSort: handleSort,
           existingContainer,
           lifecycle,
+          interactions,
         });
       case "clanmates":
         return renderClanView({
@@ -350,6 +352,7 @@
           onSort: handleSort,
           existingContainer,
           lifecycle,
+          interactions,
         });
       case "teams":
         return renderTeamView({
@@ -360,6 +363,7 @@
           onSort: handleSort,
           existingContainer,
           lifecycle,
+          interactions,
         });
       case "ships":
         return renderShipView({
@@ -370,6 +374,7 @@
           onSort: handleSort,
           existingContainer,
           lifecycle,
+          interactions,
         });
       case "landmasses":
         return renderLandmassView({
@@ -380,6 +385,7 @@
           onSort: handleSort,
           existingContainer,
           lifecycle,
+          interactions,
         });
       default:
         return createElement(
@@ -420,6 +426,7 @@
       sortState,
       onSort,
       existingContainer,
+      interactions,
     } = options;
     const metricsCache = new Map();
     const { container, tbody } = createTableShell({
@@ -441,6 +448,7 @@
         tbody,
         requestRender,
         metricsCache,
+        interactions,
       });
     }
     return container;
@@ -453,6 +461,7 @@
       sortState,
       onSort,
       existingContainer,
+      interactions,
     } = options;
     const metricsCache = new Map();
     const { container, tbody } = createTableShell({
@@ -478,6 +487,7 @@
         requestRender,
         groupType: "clan",
         metricsCache,
+        interactions,
       });
     }
     return container;
@@ -490,6 +500,7 @@
       sortState,
       onSort,
       existingContainer,
+      interactions,
     } = options;
     const metricsCache = new Map();
     const { container, tbody } = createTableShell({
@@ -515,6 +526,7 @@
         requestRender,
         groupType: "team",
         metricsCache,
+        interactions,
       });
     }
     return container;
@@ -946,6 +958,7 @@
       requestRender,
       metricsCache,
     } = options;
+    const { interactions } = options;
     const metrics = getMetrics(player, snapshot, metricsCache);
     const rowKey = player.id;
     const expanded = leaf.expandedRows.has(rowKey);
@@ -957,12 +970,17 @@
         event.preventDefault();
         event.stopPropagation();
         const tradeStopped = player.tradeStopped ?? false;
+        const playerIds = [player.id];
         showContextMenu({
           x: event.clientX,
           y: event.clientY,
           items: [
             {
               label: tradeStopped ? "Start trading" : "Stop trading",
+              disabled: !interactions?.toggleTrading,
+              onSelect: !interactions?.toggleTrading
+                ? undefined
+                : () => interactions.toggleTrading?.(playerIds, !tradeStopped),
             },
           ],
         });
@@ -1018,6 +1036,7 @@
       requestRender,
       groupType,
       metricsCache,
+      interactions,
     } = options;
     const groupKey = `${groupType}:${group.key}`;
     const expanded = leaf.expandedGroups.has(groupKey);
@@ -1027,6 +1046,43 @@
     );
     row.dataset.groupKey = groupKey;
     applyPersistentHover(row, leaf, groupKey, "bg-slate-800/60");
+    const handleContextMenu = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const actionablePlayers = group.players.filter(
+        (player) => !player.isSelf,
+      );
+      const actionableIds = Array.from(
+        new Set(actionablePlayers.map((p) => p.id)),
+      );
+      const allStopped =
+        actionableIds.length > 0 &&
+        actionablePlayers.every((player) => player.tradeStopped ?? false);
+      const labelSuffix =
+        actionableIds.length > 1
+          ? groupType === "team"
+            ? " with team"
+            : " with clan"
+          : "";
+      const label = `${allStopped ? "Start" : "Stop"} trading${labelSuffix}`;
+      showContextMenu({
+        x: event.clientX,
+        y: event.clientY,
+        items: [
+          {
+            label,
+            disabled:
+              actionableIds.length === 0 || !interactions?.toggleTrading,
+            onSelect:
+              actionableIds.length === 0 || !interactions?.toggleTrading
+                ? undefined
+                : () =>
+                    interactions.toggleTrading?.(actionableIds, !allStopped),
+          },
+        ],
+      });
+    };
+    row.addEventListener("contextmenu", handleContextMenu, { capture: true });
     const firstCell = createElement(
       "td",
       "border-b border-r border-slate-800 border-slate-900/80 px-3 py-2 align-top last:border-r-0",
@@ -1062,6 +1118,7 @@
           tbody,
           requestRender,
           metricsCache,
+          interactions,
         });
       }
     }
@@ -2175,6 +2232,10 @@
         () => this.refreshLeafContent(leaf),
         previousContainer ?? undefined,
         lifecycle.callbacks,
+        {
+          toggleTrading: (playerIds, stop) =>
+            this.store.setTradingState(playerIds, stop),
+        },
       );
       const replaced =
         !!previousContainer && nextContainer !== previousContainer;
@@ -2305,6 +2366,7 @@
     constructor(initialSnapshot) {
       this.listeners = new Set();
       this.game = null;
+      this.eventBus = null;
       this.previousAlliances = new Map();
       this.traitorHistory = new Map();
       this.shipOrigins = new Map();
@@ -2342,6 +2404,64 @@
       };
       this.notify();
     }
+    setTradingState(playerIds, stop) {
+      if (!this.game) {
+        this.scheduleGameDiscovery(true);
+        return false;
+      }
+      const eventBus = this.resolveEventBus();
+      if (!eventBus) {
+        console.warn(
+          "OpenFront sidebar: unable to locate event bus for trading",
+        );
+        return false;
+      }
+      const EmbargoEvent = this.resolveEmbargoEventConstructor(eventBus);
+      if (!EmbargoEvent) {
+        console.warn(
+          "OpenFront sidebar: unable to locate embargo event constructor",
+        );
+        return false;
+      }
+      const localPlayer = this.resolveLocalPlayer();
+      if (!localPlayer) {
+        console.warn(
+          "OpenFront sidebar: unable to resolve local player for trading",
+        );
+        return false;
+      }
+      const uniqueIds = Array.from(new Set(playerIds.filter(Boolean)));
+      let dispatched = false;
+      for (const playerId of uniqueIds) {
+        let target;
+        try {
+          target = this.game.player(playerId);
+        } catch (error) {
+          console.warn(
+            `Failed to resolve player ${playerId} for trading`,
+            error,
+          );
+          continue;
+        }
+        if (!target) {
+          continue;
+        }
+        if (this.isSamePlayer(localPlayer, String(target.id()))) {
+          continue;
+        }
+        const tradeStopped = this.determineTradeStopped(localPlayer, target);
+        if ((stop && tradeStopped) || (!stop && !tradeStopped)) {
+          continue;
+        }
+        try {
+          eventBus.emit(new EmbargoEvent(target, stop ? "start" : "stop"));
+          dispatched = true;
+        } catch (error) {
+          console.warn("Failed to dispatch trading intent", error);
+        }
+      }
+      return dispatched;
+    }
     setLandmassTrackingEnabled(enabled) {
       if (this.landmassTrackingEnabled === enabled) {
         return;
@@ -2378,6 +2498,7 @@
         const discovered = this.findLiveGame();
         if (discovered) {
           this.game = discovered;
+          this.resolveEventBus();
           this.landmassCache = null;
           this.refreshFromGame();
           if (this.attachHandle !== undefined) {
@@ -2415,10 +2536,53 @@
       }
       return null;
     }
+    findEventBus() {
+      const selectors = [
+        "player-panel",
+        "leader-board",
+        "game-right-sidebar",
+        "control-panel",
+        "events-display",
+      ].join(", ");
+      const candidates = document.querySelectorAll(selectors);
+      for (const element of candidates) {
+        const bus = element.eventBus;
+        if (bus && typeof bus.emit === "function") {
+          return bus;
+        }
+      }
+      return null;
+    }
+    resolveEventBus() {
+      if (this.eventBus) {
+        return this.eventBus;
+      }
+      const discovered = this.findEventBus();
+      if (discovered) {
+        this.eventBus = discovered;
+      }
+      return this.eventBus;
+    }
+    resolveEmbargoEventConstructor(eventBus) {
+      const listeners = eventBus.listeners;
+      if (!listeners) {
+        return null;
+      }
+      for (const ctor of listeners.keys()) {
+        if (
+          typeof ctor === "function" &&
+          ctor.name === "SendEmbargoIntentEvent"
+        ) {
+          return ctor;
+        }
+      }
+      return null;
+    }
     refreshFromGame() {
       if (!this.game) {
         return;
       }
+      this.resolveEventBus();
       try {
         const players = this.game.playerViews();
         this.captureAllianceChanges(players);
@@ -2446,6 +2610,7 @@
         // If the game context changes while we're reading from it, try attaching again.
         console.warn("Failed to refresh sidebar data", error);
         this.game = null;
+        this.eventBus = null;
         this.landmassCache = null;
         if (this.refreshHandle !== undefined) {
           window.clearInterval(this.refreshHandle);
