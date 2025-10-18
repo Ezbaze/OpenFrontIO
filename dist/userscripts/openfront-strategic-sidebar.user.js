@@ -2427,10 +2427,10 @@
         const allianceDurationMs =
           this.game.config().allianceDuration() * TICK_MILLISECONDS;
         const localPlayer = this.resolveLocalPlayer();
+        const ships = this.createShipRecords();
         const records = players.map((player) =>
           this.createPlayerRecord(player, currentTimeMs, localPlayer),
         );
-        const ships = this.createShipRecords();
         const landmasses = this.landmassTrackingEnabled
           ? this.resolveLandmassRecords(currentTick)
           : [];
@@ -2928,15 +2928,22 @@
       return attacks.map((attack) => ({
         id: attack.id,
         from: this.resolveNameBySmallId(attack.attackerID),
-        troops: attack.troops,
+        troops: this.resolveAttackTroops(attack),
       }));
     }
     mapOutgoingAttacks(attacks) {
       return attacks.map((attack) => ({
         id: attack.id,
         target: this.resolveNameBySmallId(attack.targetID),
-        troops: attack.troops,
+        troops: this.resolveAttackTroops(attack),
       }));
+    }
+    resolveAttackTroops(attack) {
+      if (attack.troops > 0) {
+        return attack.troops;
+      }
+      const manifest = this.shipManifests.get(String(attack.id));
+      return manifest ?? attack.troops;
     }
     mapActiveAlliances(player) {
       const nowTicks = this.game?.ticks() ?? 0;
