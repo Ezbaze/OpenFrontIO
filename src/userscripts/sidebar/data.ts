@@ -50,6 +50,8 @@ interface PlayerViewLike {
   traitorRemainingTicks?: number;
   hasEmbargo?(other: PlayerViewLike): boolean;
   hasEmbargoAgainst?(other: PlayerViewLike): boolean;
+  addEmbargo?(other: PlayerViewLike, isTemporary?: boolean): void;
+  stopEmbargo?(other: PlayerViewLike): void;
 }
 
 interface GameConfigLike {
@@ -74,7 +76,7 @@ interface GameViewLike {
   ticks(): number;
   config(): GameConfigLike;
   playerBySmallID(id: number): PlayerViewLike | Record<string, unknown>;
-  player(id: string): PlayerViewLike;
+  player(id: string | number): PlayerViewLike;
   units(...types: string[]): UnitViewLike[];
   unit(id: number): UnitViewLike | undefined;
   x(ref: number): number;
@@ -167,6 +169,80 @@ export class DataStore {
     if (this.game) {
       this.refreshFromGame();
     }
+  }
+
+  setTradingStopped(
+    targetPlayerIds: readonly string[],
+    stopped: boolean,
+  ): void {
+    if (!this.game) {
+      console.warn("Sidebar trading toggle skipped: game unavailable");
+      return;
+    }
+
+    const localPlayer = this.resolveLocalPlayer();
+    if (!localPlayer) {
+      console.warn("Sidebar trading toggle skipped: local player unavailable");
+      return;
+    }
+
+    const uniqueIds = new Set(targetPlayerIds);
+    const targets: PlayerViewLike[] = [];
+    for (const id of uniqueIds) {
+      if (this.isSamePlayer(localPlayer, id)) {
+        continue;
+      }
+      const resolved = this.resolvePlayerById(id);
+      if (resolved) {
+        targets.push(resolved);
+      }
+    }
+
+    if (targets.length === 0) {
+      return;
+    }
+
+    if (stopped) {
+      const addEmbargo = localPlayer.addEmbargo;
+      if (typeof addEmbargo !== "function") {
+        console.warn(
+          "Sidebar trading toggle skipped: local player cannot add embargoes",
+        );
+        return;
+      }
+      for (const target of targets) {
+        try {
+          addEmbargo.call(localPlayer, target, false);
+        } catch (error) {
+          console.warn(
+            "Failed to stop trading with player",
+            this.describePlayerForLog(target),
+            error,
+          );
+        }
+      }
+    } else {
+      const stopEmbargo = localPlayer.stopEmbargo;
+      if (typeof stopEmbargo !== "function") {
+        console.warn(
+          "Sidebar trading toggle skipped: local player cannot stop embargoes",
+        );
+        return;
+      }
+      for (const target of targets) {
+        try {
+          stopEmbargo.call(localPlayer, target);
+        } catch (error) {
+          console.warn(
+            "Failed to resume trading with player",
+            this.describePlayerForLog(target),
+            error,
+          );
+        }
+      }
+    }
+
+    this.refreshFromGame();
   }
 
   private notify(): void {
@@ -1009,5 +1085,80 @@ export class DataStore {
       console.warn("Failed to compare player identity", error);
       return false;
     }
+  }
+
+  private resolvePlayerById(playerId: string): PlayerViewLike | null {
+    if (!this.game) {
+      return null;
+    }
+
+    const attempts: Array<() => PlayerViewLike | null> = [
+      () => {
+        try {
+          const candidate = this.game?.player(playerId);
+          return this.isPlayerViewLike(candidate) ? candidate : null;
+        } catch (error) {
+          return null;
+        }
+      },
+    ];
+
+    const numericId = Number(playerId);
+    if (Number.isFinite(numericId)) {
+      attempts.push(() => {
+        try {
+          const candidate = this.game?.player(numericId);
+          return this.isPlayerViewLike(candidate) ? candidate : null;
+        } catch (error) {
+          return null;
+        }
+      });
+      attempts.push(() => {
+        try {
+          const candidate = this.game?.playerBySmallID(numericId);
+          return this.isPlayerViewLike(candidate) ? candidate : null;
+        } catch (error) {
+          return null;
+        }
+      });
+    }
+
+    for (const attempt of attempts) {
+      const result = attempt();
+      if (result) {
+        return result;
+      }
+    }
+
+    console.warn(`Failed to resolve player ${playerId} in game context`);
+    return null;
+  }
+
+  private isPlayerViewLike(value: unknown): value is PlayerViewLike {
+    if (!value || typeof value !== "object") {
+      return false;
+    }
+    const candidate = value as PlayerViewLike;
+    return (
+      typeof candidate.id === "function" &&
+      typeof candidate.displayName === "function" &&
+      typeof candidate.smallID === "function"
+    );
+  }
+
+  private describePlayerForLog(player: PlayerViewLike): string {
+    let name = "Unknown";
+    let id: string | number = "?";
+    try {
+      name = player.displayName();
+    } catch (error) {
+      // ignore
+    }
+    try {
+      id = player.id();
+    } catch (error) {
+      // ignore
+    }
+    return `${name} (#${id})`;
   }
 }

@@ -3,7 +3,7 @@
 // @namespace		https://openfront.io/
 // @version			0.1.0
 // @description		Adds a resizable, splittable strategic sidebar for OpenFront players, clans, and teams.
-// @author		ezbaze
+// @author			ezbaze
 // @match			https://*.openfront.io/*
 // @match			https://openfront.io/*
 // @updateURL		https://raw.githubusercontent.com/OpenFrontIO/userscripts/main/openfront-strategic-sidebar.user.js
@@ -156,12 +156,13 @@
     if (!contextMenuElement) {
       contextMenuElement = createElement(
         "div",
-        "fixed z-[100000] min-w-[160px] overflow-hidden rounded-md border " +
+        "fixed z-[2147483647] min-w-[160px] overflow-hidden rounded-md border " +
           "border-slate-700/80 bg-slate-950/95 text-sm text-slate-100 shadow-2xl " +
           "backdrop-blur",
       );
       contextMenuElement.dataset.sidebarRole = "context-menu";
       contextMenuElement.style.pointerEvents = "auto";
+      contextMenuElement.style.zIndex = "2147483647";
     }
     return contextMenuElement;
   }
@@ -183,9 +184,10 @@
     hideContextMenu();
     const menu = ensureContextMenuElement();
     menu.className =
-      "fixed z-[100000] min-w-[160px] overflow-hidden rounded-md border " +
+      "fixed z-[2147483647] min-w-[160px] overflow-hidden rounded-md border " +
       "border-slate-700/80 bg-slate-950/95 text-sm text-slate-100 shadow-2xl " +
       "backdrop-blur";
+    menu.style.zIndex = "2147483647";
     menu.style.visibility = "hidden";
     menu.style.left = "0px";
     menu.style.top = "0px";
@@ -281,6 +283,9 @@
     }, 0);
   }
 
+  const DEFAULT_ACTIONS = {
+    toggleTrading: () => undefined,
+  };
   const TABLE_HEADERS = [
     { key: "label", label: "Clan / Player", align: "left" },
     { key: "tiles", label: "Tiles", align: "right" },
@@ -318,9 +323,11 @@
     requestRender,
     existingContainer,
     lifecycle,
+    actions,
   ) {
     const view = leaf.view;
     const sortState = ensureSortState(leaf, view);
+    const viewActions = actions ?? DEFAULT_ACTIONS;
     const handleSort = (key) => {
       const current = ensureSortState(leaf, view);
       let direction;
@@ -341,6 +348,7 @@
           sortState,
           onSort: handleSort,
           existingContainer,
+          actions: viewActions,
           lifecycle,
         });
       case "clanmates":
@@ -351,6 +359,7 @@
           sortState,
           onSort: handleSort,
           existingContainer,
+          actions: viewActions,
           lifecycle,
         });
       case "teams":
@@ -361,6 +370,7 @@
           sortState,
           onSort: handleSort,
           existingContainer,
+          actions: viewActions,
           lifecycle,
         });
       case "ships":
@@ -371,6 +381,7 @@
           sortState,
           onSort: handleSort,
           existingContainer,
+          actions: viewActions,
           lifecycle,
         });
       case "landmasses":
@@ -381,6 +392,7 @@
           sortState,
           onSort: handleSort,
           existingContainer,
+          actions: viewActions,
           lifecycle,
         });
       default:
@@ -422,6 +434,7 @@
       sortState,
       onSort,
       existingContainer,
+      actions,
     } = options;
     const metricsCache = new Map();
     const { container, tbody } = createTableShell({
@@ -445,6 +458,7 @@
         metricsCache,
       });
     }
+    registerContextMenuDelegation(container, actions);
     return container;
   }
   function renderClanView(options) {
@@ -455,6 +469,7 @@
       sortState,
       onSort,
       existingContainer,
+      actions,
     } = options;
     const metricsCache = new Map();
     const { container, tbody } = createTableShell({
@@ -482,6 +497,7 @@
         metricsCache,
       });
     }
+    registerContextMenuDelegation(container, actions);
     return container;
   }
   function renderTeamView(options) {
@@ -492,6 +508,7 @@
       sortState,
       onSort,
       existingContainer,
+      actions,
     } = options;
     const metricsCache = new Map();
     const { container, tbody } = createTableShell({
@@ -519,6 +536,7 @@
         metricsCache,
       });
     }
+    registerContextMenuDelegation(container, actions);
     return container;
   }
   function renderShipView(options) {
@@ -938,6 +956,119 @@
     }
     return "En route";
   }
+  const tableContextActions = new WeakMap();
+  const playerContextTargets = new WeakMap();
+  const groupContextTargets = new WeakMap();
+  function findContextMenuTarget(event, container) {
+    if (
+      event.target instanceof HTMLElement &&
+      container.contains(event.target)
+    ) {
+      let current = event.target;
+      while (current && current !== container) {
+        const type = current.dataset.contextTarget;
+        if (type === "player" || type === "group") {
+          return { element: current, type };
+        }
+        current = current.parentElement;
+      }
+    }
+    const composedPath =
+      typeof event.composedPath === "function" ? event.composedPath() : [];
+    for (const node of composedPath) {
+      if (!(node instanceof HTMLElement)) {
+        continue;
+      }
+      if (!container.contains(node)) {
+        continue;
+      }
+      const type = node.dataset.contextTarget;
+      if (type === "player" || type === "group") {
+        return { element: node, type };
+      }
+    }
+    return null;
+  }
+  function registerContextMenuDelegation(container, actions) {
+    tableContextActions.set(container, actions);
+    if (container.dataset.contextMenuDelegated === "true") {
+      return;
+    }
+    const handleContextMenu = (event) => {
+      const tableContainer = event.currentTarget;
+      const activeActions = tableContextActions.get(tableContainer);
+      if (!activeActions) {
+        return;
+      }
+      const targetInfo = findContextMenuTarget(event, tableContainer);
+      if (!targetInfo) {
+        return;
+      }
+      if (targetInfo.type === "player") {
+        const target = playerContextTargets.get(targetInfo.element);
+        if (!target) {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        const nextStopped = !target.tradeStopped;
+        showContextMenu({
+          x: event.clientX,
+          y: event.clientY,
+          items: [
+            {
+              label: target.tradeStopped
+                ? `Start trading with ${target.name}`
+                : `Stop trading with ${target.name}`,
+              onSelect: () =>
+                activeActions.toggleTrading([target.id], nextStopped),
+            },
+          ],
+        });
+        return;
+      }
+      const target = groupContextTargets.get(targetInfo.element);
+      if (!target) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      if (target.players.length === 0) {
+        showContextMenu({
+          x: event.clientX,
+          y: event.clientY,
+          items: [
+            {
+              label: `Stop trading with ${target.label}`,
+              disabled: true,
+            },
+          ],
+        });
+        return;
+      }
+      const allStopped = target.players.every(
+        (player) => player.tradeStopped ?? false,
+      );
+      const nextStopped = !allStopped;
+      const ids = Array.from(
+        new Set(target.players.map((player) => player.id)),
+      );
+      showContextMenu({
+        x: event.clientX,
+        y: event.clientY,
+        items: [
+          {
+            label: allStopped
+              ? `Start trading with ${target.label}`
+              : `Stop trading with ${target.label}`,
+            onSelect: () => activeActions.toggleTrading(ids, nextStopped),
+          },
+        ],
+      });
+    };
+    container.addEventListener("contextmenu", handleContextMenu);
+    container.dataset.contextMenuDelegated = "true";
+  }
   function appendPlayerRows(options) {
     const {
       player,
@@ -955,21 +1086,12 @@
     tr.dataset.rowKey = rowKey;
     applyPersistentHover(tr, leaf, rowKey, "bg-slate-800/50");
     if (!player.isSelf) {
-      const handleContextMenu = (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        const tradeStopped = player.tradeStopped ?? false;
-        showContextMenu({
-          x: event.clientX,
-          y: event.clientY,
-          items: [
-            {
-              label: tradeStopped ? "Start trading" : "Stop trading",
-            },
-          ],
-        });
-      };
-      tr.addEventListener("contextmenu", handleContextMenu, { capture: true });
+      tr.dataset.contextTarget = "player";
+      playerContextTargets.set(tr, {
+        id: player.id,
+        name: player.name,
+        tradeStopped: player.tradeStopped ?? false,
+      });
     }
     const firstCell = createElement(
       "td",
@@ -1029,6 +1151,12 @@
     );
     row.dataset.groupKey = groupKey;
     applyPersistentHover(row, leaf, groupKey, "bg-slate-800/60");
+    const eligiblePlayers = group.players.filter((player) => !player.isSelf);
+    row.dataset.contextTarget = "group";
+    groupContextTargets.set(row, {
+      label: group.label,
+      players: eligiblePlayers,
+    });
     const firstCell = createElement(
       "td",
       "border-b border-r border-slate-800 border-slate-900/80 px-3 py-2 align-top last:border-r-0",
@@ -1655,6 +1783,10 @@
         "[data-sidebar-layout]",
       );
       this.rootNode = createLeaf("clanmates");
+      this.viewActions = {
+        toggleTrading: (playerIds, stopped) =>
+          this.store.setTradingStopped(playerIds, stopped),
+      };
       this.renderLayout();
       this.store.subscribe((snapshot) => {
         this.snapshot = snapshot;
@@ -2177,6 +2309,7 @@
         () => this.refreshLeafContent(leaf),
         previousContainer ?? undefined,
         lifecycle.callbacks,
+        this.viewActions,
       );
       const replaced =
         !!previousContainer && nextContainer !== previousContainer;
@@ -2363,6 +2496,73 @@
       if (this.game) {
         this.refreshFromGame();
       }
+    }
+    setTradingStopped(targetPlayerIds, stopped) {
+      if (!this.game) {
+        console.warn("Sidebar trading toggle skipped: game unavailable");
+        return;
+      }
+      const localPlayer = this.resolveLocalPlayer();
+      if (!localPlayer) {
+        console.warn(
+          "Sidebar trading toggle skipped: local player unavailable",
+        );
+        return;
+      }
+      const uniqueIds = new Set(targetPlayerIds);
+      const targets = [];
+      for (const id of uniqueIds) {
+        if (this.isSamePlayer(localPlayer, id)) {
+          continue;
+        }
+        const resolved = this.resolvePlayerById(id);
+        if (resolved) {
+          targets.push(resolved);
+        }
+      }
+      if (targets.length === 0) {
+        return;
+      }
+      if (stopped) {
+        const addEmbargo = localPlayer.addEmbargo;
+        if (typeof addEmbargo !== "function") {
+          console.warn(
+            "Sidebar trading toggle skipped: local player cannot add embargoes",
+          );
+          return;
+        }
+        for (const target of targets) {
+          try {
+            addEmbargo.call(localPlayer, target, false);
+          } catch (error) {
+            console.warn(
+              "Failed to stop trading with player",
+              this.describePlayerForLog(target),
+              error,
+            );
+          }
+        }
+      } else {
+        const stopEmbargo = localPlayer.stopEmbargo;
+        if (typeof stopEmbargo !== "function") {
+          console.warn(
+            "Sidebar trading toggle skipped: local player cannot stop embargoes",
+          );
+          return;
+        }
+        for (const target of targets) {
+          try {
+            stopEmbargo.call(localPlayer, target);
+          } catch (error) {
+            console.warn(
+              "Failed to resume trading with player",
+              this.describePlayerForLog(target),
+              error,
+            );
+          }
+        }
+      }
+      this.refreshFromGame();
     }
     notify() {
       for (const listener of this.listeners) {
@@ -3078,6 +3278,74 @@
         console.warn("Failed to compare player identity", error);
         return false;
       }
+    }
+    resolvePlayerById(playerId) {
+      if (!this.game) {
+        return null;
+      }
+      const attempts = [
+        () => {
+          try {
+            const candidate = this.game?.player(playerId);
+            return this.isPlayerViewLike(candidate) ? candidate : null;
+          } catch (error) {
+            return null;
+          }
+        },
+      ];
+      const numericId = Number(playerId);
+      if (Number.isFinite(numericId)) {
+        attempts.push(() => {
+          try {
+            const candidate = this.game?.player(numericId);
+            return this.isPlayerViewLike(candidate) ? candidate : null;
+          } catch (error) {
+            return null;
+          }
+        });
+        attempts.push(() => {
+          try {
+            const candidate = this.game?.playerBySmallID(numericId);
+            return this.isPlayerViewLike(candidate) ? candidate : null;
+          } catch (error) {
+            return null;
+          }
+        });
+      }
+      for (const attempt of attempts) {
+        const result = attempt();
+        if (result) {
+          return result;
+        }
+      }
+      console.warn(`Failed to resolve player ${playerId} in game context`);
+      return null;
+    }
+    isPlayerViewLike(value) {
+      if (!value || typeof value !== "object") {
+        return false;
+      }
+      const candidate = value;
+      return (
+        typeof candidate.id === "function" &&
+        typeof candidate.displayName === "function" &&
+        typeof candidate.smallID === "function"
+      );
+    }
+    describePlayerForLog(player) {
+      let name = "Unknown";
+      let id = "?";
+      try {
+        name = player.displayName();
+      } catch (error) {
+        // ignore
+      }
+      try {
+        id = player.id();
+      } catch (error) {
+        // ignore
+      }
+      return `${name} (#${id})`;
     }
   }
 

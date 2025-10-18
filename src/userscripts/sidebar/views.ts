@@ -28,6 +28,14 @@ export interface ViewLifecycleCallbacks {
   registerCleanup?: (cleanup: () => void) => void;
 }
 
+export interface ViewActionHandlers {
+  toggleTrading: (playerIds: string[], stopped: boolean) => void;
+}
+
+const DEFAULT_ACTIONS: ViewActionHandlers = {
+  toggleTrading: () => undefined,
+};
+
 interface AggregatedRow {
   key: string;
   label: string;
@@ -87,9 +95,11 @@ export function buildViewContent(
   requestRender: RequestRender,
   existingContainer?: HTMLElement,
   lifecycle?: ViewLifecycleCallbacks,
+  actions?: ViewActionHandlers,
 ): HTMLElement {
   const view = leaf.view;
   const sortState = ensureSortState(leaf, view);
+  const viewActions = actions ?? DEFAULT_ACTIONS;
   const handleSort = (key: SortKey) => {
     const current = ensureSortState(leaf, view);
     let direction: SortDirection;
@@ -111,6 +121,7 @@ export function buildViewContent(
         sortState,
         onSort: handleSort,
         existingContainer,
+        actions: viewActions,
         lifecycle,
       });
     case "clanmates":
@@ -121,6 +132,7 @@ export function buildViewContent(
         sortState,
         onSort: handleSort,
         existingContainer,
+        actions: viewActions,
         lifecycle,
       });
     case "teams":
@@ -131,6 +143,7 @@ export function buildViewContent(
         sortState,
         onSort: handleSort,
         existingContainer,
+        actions: viewActions,
         lifecycle,
       });
     case "ships":
@@ -141,6 +154,7 @@ export function buildViewContent(
         sortState,
         onSort: handleSort,
         existingContainer,
+        actions: viewActions,
         lifecycle,
       });
     case "landmasses":
@@ -151,6 +165,7 @@ export function buildViewContent(
         sortState,
         onSort: handleSort,
         existingContainer,
+        actions: viewActions,
         lifecycle,
       });
     default:
@@ -190,6 +205,7 @@ interface ViewRenderOptions {
   sortState: SortState;
   onSort: (key: SortKey) => void;
   existingContainer?: HTMLElement;
+  actions: ViewActionHandlers;
   lifecycle?: ViewLifecycleCallbacks;
 }
 
@@ -201,6 +217,7 @@ function renderPlayersView(options: ViewRenderOptions): HTMLElement {
     sortState,
     onSort,
     existingContainer,
+    actions,
   } = options;
   const metricsCache = new Map<string, Metrics>();
   const { container, tbody } = createTableShell({
@@ -226,6 +243,7 @@ function renderPlayersView(options: ViewRenderOptions): HTMLElement {
     });
   }
 
+  registerContextMenuDelegation(container, actions);
   return container;
 }
 
@@ -237,6 +255,7 @@ function renderClanView(options: ViewRenderOptions): HTMLElement {
     sortState,
     onSort,
     existingContainer,
+    actions,
   } = options;
   const metricsCache = new Map<string, Metrics>();
   const { container, tbody } = createTableShell({
@@ -266,6 +285,7 @@ function renderClanView(options: ViewRenderOptions): HTMLElement {
     });
   }
 
+  registerContextMenuDelegation(container, actions);
   return container;
 }
 
@@ -277,6 +297,7 @@ function renderTeamView(options: ViewRenderOptions): HTMLElement {
     sortState,
     onSort,
     existingContainer,
+    actions,
   } = options;
   const metricsCache = new Map<string, Metrics>();
   const { container, tbody } = createTableShell({
@@ -306,6 +327,7 @@ function renderTeamView(options: ViewRenderOptions): HTMLElement {
     });
   }
 
+  registerContextMenuDelegation(container, actions);
   return container;
 }
 
@@ -774,6 +796,145 @@ function deriveShipStatus(ship: ShipRecord): string {
   return "En route";
 }
 
+interface PlayerContextTarget {
+  id: string;
+  name: string;
+  tradeStopped: boolean;
+}
+
+interface GroupContextTarget {
+  label: string;
+  players: PlayerRecord[];
+}
+
+const tableContextActions = new WeakMap<HTMLElement, ViewActionHandlers>();
+const playerContextTargets = new WeakMap<HTMLElement, PlayerContextTarget>();
+const groupContextTargets = new WeakMap<HTMLElement, GroupContextTarget>();
+
+function findContextMenuTarget(
+  event: MouseEvent,
+  container: HTMLElement,
+): { element: HTMLElement; type: "player" | "group" } | null {
+  if (event.target instanceof HTMLElement && container.contains(event.target)) {
+    let current: HTMLElement | null = event.target;
+    while (current && current !== container) {
+      const type = current.dataset.contextTarget;
+      if (type === "player" || type === "group") {
+        return { element: current, type };
+      }
+      current = current.parentElement;
+    }
+  }
+
+  const composedPath =
+    typeof event.composedPath === "function" ? event.composedPath() : [];
+  for (const node of composedPath) {
+    if (!(node instanceof HTMLElement)) {
+      continue;
+    }
+    if (!container.contains(node)) {
+      continue;
+    }
+    const type = node.dataset.contextTarget;
+    if (type === "player" || type === "group") {
+      return { element: node, type };
+    }
+  }
+
+  return null;
+}
+
+function registerContextMenuDelegation(
+  container: HTMLElement,
+  actions: ViewActionHandlers,
+): void {
+  tableContextActions.set(container, actions);
+  if (container.dataset.contextMenuDelegated === "true") {
+    return;
+  }
+
+  const handleContextMenu = (event: MouseEvent) => {
+    const tableContainer = event.currentTarget as HTMLElement;
+    const activeActions = tableContextActions.get(tableContainer);
+    if (!activeActions) {
+      return;
+    }
+
+    const targetInfo = findContextMenuTarget(event, tableContainer);
+    if (!targetInfo) {
+      return;
+    }
+
+    if (targetInfo.type === "player") {
+      const target = playerContextTargets.get(targetInfo.element);
+      if (!target) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      const nextStopped = !target.tradeStopped;
+      showContextMenu({
+        x: event.clientX,
+        y: event.clientY,
+        items: [
+          {
+            label: target.tradeStopped
+              ? `Start trading with ${target.name}`
+              : `Stop trading with ${target.name}`,
+            onSelect: () =>
+              activeActions.toggleTrading([target.id], nextStopped),
+          },
+        ],
+      });
+      return;
+    }
+
+    const target = groupContextTargets.get(targetInfo.element);
+    if (!target) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    if (target.players.length === 0) {
+      showContextMenu({
+        x: event.clientX,
+        y: event.clientY,
+        items: [
+          {
+            label: `Stop trading with ${target.label}`,
+            disabled: true,
+          },
+        ],
+      });
+      return;
+    }
+
+    const allStopped = target.players.every(
+      (player) => player.tradeStopped ?? false,
+    );
+    const nextStopped = !allStopped;
+    const ids = Array.from(new Set(target.players.map((player) => player.id)));
+    showContextMenu({
+      x: event.clientX,
+      y: event.clientY,
+      items: [
+        {
+          label: allStopped
+            ? `Start trading with ${target.label}`
+            : `Stop trading with ${target.label}`,
+          onSelect: () => activeActions.toggleTrading(ids, nextStopped),
+        },
+      ],
+    });
+  };
+
+  container.addEventListener("contextmenu", handleContextMenu);
+  container.dataset.contextMenuDelegated = "true";
+}
+
 function appendPlayerRows(options: {
   player: PlayerRecord;
   indent: number;
@@ -794,22 +955,12 @@ function appendPlayerRows(options: {
   applyPersistentHover(tr, leaf, rowKey, "bg-slate-800/50");
 
   if (!player.isSelf) {
-    const handleContextMenu = (event: MouseEvent) => {
-      event.preventDefault();
-      event.stopPropagation();
-      const tradeStopped = player.tradeStopped ?? false;
-      showContextMenu({
-        x: event.clientX,
-        y: event.clientY,
-        items: [
-          {
-            label: tradeStopped ? "Start trading" : "Stop trading",
-          },
-        ],
-      });
-    };
-
-    tr.addEventListener("contextmenu", handleContextMenu, { capture: true });
+    tr.dataset.contextTarget = "player";
+    playerContextTargets.set(tr, {
+      id: player.id,
+      name: player.name,
+      tradeStopped: player.tradeStopped ?? false,
+    });
   }
 
   const firstCell = createElement(
@@ -882,6 +1033,13 @@ function appendGroupRows(options: {
   );
   row.dataset.groupKey = groupKey;
   applyPersistentHover(row, leaf, groupKey, "bg-slate-800/60");
+
+  const eligiblePlayers = group.players.filter((player) => !player.isSelf);
+  row.dataset.contextTarget = "group";
+  groupContextTargets.set(row, {
+    label: group.label,
+    players: eligiblePlayers,
+  });
 
   const firstCell = createElement(
     "td",

@@ -149,12 +149,13 @@ function ensureContextMenuElement(): HTMLDivElement {
   if (!contextMenuElement) {
     contextMenuElement = createElement(
       "div",
-      "fixed z-[100000] min-w-[160px] overflow-hidden rounded-md border " +
+      "fixed z-[2147483647] min-w-[160px] overflow-hidden rounded-md border " +
         "border-slate-700/80 bg-slate-950/95 text-sm text-slate-100 shadow-2xl " +
         "backdrop-blur",
     );
     contextMenuElement.dataset.sidebarRole = "context-menu";
     contextMenuElement.style.pointerEvents = "auto";
+    contextMenuElement.style.zIndex = "2147483647";
   }
 
   return contextMenuElement;
@@ -182,9 +183,10 @@ export function showContextMenu(options: ShowContextMenuOptions): void {
 
   const menu = ensureContextMenuElement();
   menu.className =
-    "fixed z-[100000] min-w-[160px] overflow-hidden rounded-md border " +
+    "fixed z-[2147483647] min-w-[160px] overflow-hidden rounded-md border " +
     "border-slate-700/80 bg-slate-950/95 text-sm text-slate-100 shadow-2xl " +
     "backdrop-blur";
+  menu.style.zIndex = "2147483647";
   menu.style.visibility = "hidden";
   menu.style.left = "0px";
   menu.style.top = "0px";
