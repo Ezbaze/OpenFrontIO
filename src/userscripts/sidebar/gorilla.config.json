@@ -3,8 +3,10 @@
   "namespace": "https://openfront.io/",
   "version": "0.1.0",
   "description": "Adds a resizable, splittable strategic sidebar for OpenFront players, clans, and teams.",
+  "author": "ezbaze",
   "match": ["https://*.openfront.io/*", "https://openfront.io/*"],
   "grant": [],
   "updateURL": "https://raw.githubusercontent.com/OpenFrontIO/userscripts/main/openfront-strategic-sidebar.user.js",
-  "downloadURL": "https://raw.githubusercontent.com/OpenFrontIO/userscripts/main/openfront-strategic-sidebar.user.js"
+  "downloadURL": "https://raw.githubusercontent.com/OpenFrontIO/userscripts/main/openfront-strategic-sidebar.user.js",
+  "homepageURL": "https://github.com/Ezbaze"
 }
