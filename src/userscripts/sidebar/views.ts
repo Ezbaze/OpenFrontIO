@@ -800,6 +800,7 @@ interface PlayerContextTarget {
   id: string;
   name: string;
   tradeStopped: boolean;
+  isSelf: boolean;
 }
 
 interface GroupContextTarget {
@@ -874,16 +875,20 @@ function registerContextMenuDelegation(
       event.preventDefault();
       event.stopPropagation();
       const nextStopped = !target.tradeStopped;
+      const disabled = target.isSelf;
+      const baseLabel = target.tradeStopped
+        ? `Start trading with ${target.name}`
+        : `Stop trading with ${target.name}`;
       showContextMenu({
         x: event.clientX,
         y: event.clientY,
         items: [
           {
-            label: target.tradeStopped
-              ? `Start trading with ${target.name}`
-              : `Stop trading with ${target.name}`,
-            onSelect: () =>
-              activeActions.toggleTrading([target.id], nextStopped),
+            label: disabled ? `${baseLabel} (unavailable)` : baseLabel,
+            disabled,
+            onSelect: disabled
+              ? undefined
+              : () => activeActions.toggleTrading([target.id], nextStopped),
           },
         ],
       });
@@ -954,14 +959,13 @@ function appendPlayerRows(options: {
   tr.dataset.rowKey = rowKey;
   applyPersistentHover(tr, leaf, rowKey, "bg-slate-800/50");
 
-  if (!player.isSelf) {
-    tr.dataset.contextTarget = "player";
-    playerContextTargets.set(tr, {
-      id: player.id,
-      name: player.name,
-      tradeStopped: player.tradeStopped ?? false,
-    });
-  }
+  tr.dataset.contextTarget = "player";
+  playerContextTargets.set(tr, {
+    id: player.id,
+    name: player.name,
+    tradeStopped: player.tradeStopped ?? false,
+    isSelf: player.isSelf ?? false,
+  });
 
   const firstCell = createElement(
     "td",
