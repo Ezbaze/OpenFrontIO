@@ -24,6 +24,111 @@ interface ViewInteractions {
   toggleTrading?: (playerIds: readonly string[], stop: boolean) => void;
 }
 
+type TradingContextTarget =
+  | {
+      kind: "player";
+      playerIds: readonly string[];
+      tradeStopped: boolean;
+    }
+  | {
+      kind: "group";
+      playerIds: readonly string[];
+      groupType: "team" | "clan";
+      allStopped: boolean;
+    };
+
+interface TradingContextState {
+  targets: WeakMap<HTMLElement, TradingContextTarget>;
+  interactions?: ViewInteractions;
+}
+
+const tradingContextStates = new WeakMap<HTMLElement, TradingContextState>();
+
+function ensureTradingContextMenu(
+  tbody: HTMLElement,
+  interactions?: ViewInteractions,
+): (row: HTMLElement, target: TradingContextTarget) => void {
+  let state = tradingContextStates.get(tbody);
+  if (!state) {
+    state = {
+      targets: new WeakMap<HTMLElement, TradingContextTarget>(),
+      interactions,
+    };
+    tradingContextStates.set(tbody, state);
+    const stateRef = state;
+    tbody.addEventListener(
+      "contextmenu",
+      (event) => {
+        const row = (event.target as HTMLElement | null)?.closest("tr");
+        if (!row) {
+          return;
+        }
+        const target = stateRef.targets.get(row);
+        if (!target) {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        const items = buildTradingMenuItems(
+          target,
+          stateRef.interactions?.toggleTrading,
+        );
+        showContextMenu({
+          x: event.clientX,
+          y: event.clientY,
+          items,
+        });
+      },
+      true,
+    );
+  }
+
+  state.interactions = interactions;
+
+  return (row, target) => {
+    state.targets.set(row, target);
+  };
+}
+
+function buildTradingMenuItems(
+  target: TradingContextTarget,
+  toggleTrading?: ViewInteractions["toggleTrading"],
+): Array<{ label: string; disabled?: boolean; onSelect?: () => void }> {
+  if (target.kind === "player") {
+    const tradeStopped = target.tradeStopped;
+    const disabled = !toggleTrading;
+    return [
+      {
+        label: tradeStopped ? "Start trading" : "Stop trading",
+        disabled,
+        onSelect:
+          disabled || !toggleTrading
+            ? undefined
+            : () => toggleTrading(target.playerIds, !tradeStopped),
+      },
+    ];
+  }
+
+  const labelSuffix =
+    target.playerIds.length > 0
+      ? target.groupType === "team"
+        ? " with team"
+        : " with clan"
+      : "";
+  const disabled = target.playerIds.length === 0 || !toggleTrading;
+  const allStopped = target.allStopped;
+  return [
+    {
+      label: `${allStopped ? "Start" : "Stop"} trading${labelSuffix}`,
+      disabled,
+      onSelect:
+        disabled || !toggleTrading
+          ? undefined
+          : () => toggleTrading(target.playerIds, !allStopped),
+    },
+  ];
+}
+
 type Metrics = ReturnType<typeof computePlayerMetrics>;
 
 export interface ViewLifecycleCallbacks {
@@ -222,6 +327,7 @@ function renderPlayersView(options: ViewRenderOptions): HTMLElement {
     view: leaf.view,
     headers: TABLE_HEADERS,
   });
+  const registerTradingContext = ensureTradingContextMenu(tbody, interactions);
   const players = [...snapshot.players].sort((a, b) =>
     comparePlayers({ a, b, sortState, snapshot, metricsCache }),
   );
@@ -236,6 +342,7 @@ function renderPlayersView(options: ViewRenderOptions): HTMLElement {
       requestRender,
       metricsCache,
       interactions,
+      registerTradingContext,
     });
   }
 
@@ -260,6 +367,7 @@ function renderClanView(options: ViewRenderOptions): HTMLElement {
     view: leaf.view,
     headers: TABLE_HEADERS,
   });
+  const registerTradingContext = ensureTradingContextMenu(tbody, interactions);
   const groups = groupPlayers({
     players: snapshot.players,
     snapshot,
@@ -278,6 +386,7 @@ function renderClanView(options: ViewRenderOptions): HTMLElement {
       groupType: "clan",
       metricsCache,
       interactions,
+      registerTradingContext,
     });
   }
 
@@ -302,6 +411,7 @@ function renderTeamView(options: ViewRenderOptions): HTMLElement {
     view: leaf.view,
     headers: TABLE_HEADERS,
   });
+  const registerTradingContext = ensureTradingContextMenu(tbody, interactions);
   const groups = groupPlayers({
     players: snapshot.players,
     snapshot,
@@ -320,6 +430,7 @@ function renderTeamView(options: ViewRenderOptions): HTMLElement {
       groupType: "team",
       metricsCache,
       interactions,
+      registerTradingContext,
     });
   }
 
@@ -800,10 +911,14 @@ function appendPlayerRows(options: {
   requestRender: RequestRender;
   metricsCache: Map<string, Metrics>;
   interactions?: ViewInteractions;
+  registerTradingContext?: (
+    row: HTMLElement,
+    target: TradingContextTarget,
+  ) => void;
 }) {
   const { player, indent, leaf, snapshot, tbody, requestRender, metricsCache } =
     options;
-  const { interactions } = options;
+  const { registerTradingContext } = options;
   const metrics = getMetrics(player, snapshot, metricsCache);
   const rowKey = player.id;
   const expanded = leaf.expandedRows.has(rowKey);
@@ -813,27 +928,11 @@ function appendPlayerRows(options: {
   applyPersistentHover(tr, leaf, rowKey, "bg-slate-800/50");
 
   if (!player.isSelf) {
-    const handleContextMenu = (event: MouseEvent) => {
-      event.preventDefault();
-      event.stopPropagation();
-      const tradeStopped = player.tradeStopped ?? false;
-      const playerIds = [player.id];
-      showContextMenu({
-        x: event.clientX,
-        y: event.clientY,
-        items: [
-          {
-            label: tradeStopped ? "Start trading" : "Stop trading",
-            disabled: !interactions?.toggleTrading,
-            onSelect: !interactions?.toggleTrading
-              ? undefined
-              : () => interactions.toggleTrading?.(playerIds, !tradeStopped),
-          },
-        ],
-      });
-    };
-
-    tr.addEventListener("contextmenu", handleContextMenu, { capture: true });
+    registerTradingContext?.(tr, {
+      kind: "player",
+      playerIds: [player.id],
+      tradeStopped: player.tradeStopped ?? false,
+    });
   }
 
   const firstCell = createElement(
@@ -888,6 +987,10 @@ function appendGroupRows(options: {
   groupType: "clan" | "team";
   metricsCache: Map<string, Metrics>;
   interactions?: ViewInteractions;
+  registerTradingContext?: (
+    row: HTMLElement,
+    target: TradingContextTarget,
+  ) => void;
 }) {
   const {
     group,
@@ -898,6 +1001,7 @@ function appendGroupRows(options: {
     groupType,
     metricsCache,
     interactions,
+    registerTradingContext,
   } = options;
   const groupKey = `${groupType}:${group.key}`;
   const expanded = leaf.expandedGroups.has(groupKey);
@@ -909,41 +1013,18 @@ function appendGroupRows(options: {
   row.dataset.groupKey = groupKey;
   applyPersistentHover(row, leaf, groupKey, "bg-slate-800/60");
 
-  const handleContextMenu = (event: MouseEvent) => {
-    event.preventDefault();
-    event.stopPropagation();
-    const actionablePlayers = group.players.filter((player) => !player.isSelf);
-    const actionableIds = Array.from(
-      new Set(actionablePlayers.map((p) => p.id)),
-    );
-    const allStopped =
-      actionableIds.length > 0 &&
-      actionablePlayers.every((player) => player.tradeStopped ?? false);
-    const labelSuffix =
-      actionableIds.length > 0
-        ? groupType === "team"
-          ? " with team"
-          : " with clan"
-        : "";
-    const label = `${allStopped ? "Start" : "Stop"} trading${labelSuffix}`;
+  const actionablePlayers = group.players.filter((player) => !player.isSelf);
+  const actionableIds = Array.from(new Set(actionablePlayers.map((p) => p.id)));
+  const allStopped =
+    actionableIds.length > 0 &&
+    actionablePlayers.every((player) => player.tradeStopped ?? false);
 
-    showContextMenu({
-      x: event.clientX,
-      y: event.clientY,
-      items: [
-        {
-          label,
-          disabled: actionableIds.length === 0 || !interactions?.toggleTrading,
-          onSelect:
-            actionableIds.length === 0 || !interactions?.toggleTrading
-              ? undefined
-              : () => interactions.toggleTrading?.(actionableIds, !allStopped),
-        },
-      ],
-    });
-  };
-
-  row.addEventListener("contextmenu", handleContextMenu, { capture: true });
+  registerTradingContext?.(row, {
+    kind: "group",
+    playerIds: actionableIds,
+    groupType,
+    allStopped,
+  });
 
   const firstCell = createElement(
     "td",
@@ -983,6 +1064,7 @@ function appendGroupRows(options: {
         requestRender,
         metricsCache,
         interactions,
+        registerTradingContext,
       });
     }
   }

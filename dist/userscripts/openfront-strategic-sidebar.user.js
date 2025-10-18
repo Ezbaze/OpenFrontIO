@@ -279,6 +279,81 @@
     }, 0);
   }
 
+  const tradingContextStates = new WeakMap();
+  function ensureTradingContextMenu(tbody, interactions) {
+    let state = tradingContextStates.get(tbody);
+    if (!state) {
+      state = {
+        targets: new WeakMap(),
+        interactions,
+      };
+      tradingContextStates.set(tbody, state);
+      const stateRef = state;
+      tbody.addEventListener(
+        "contextmenu",
+        (event) => {
+          const row = event.target?.closest("tr");
+          if (!row) {
+            return;
+          }
+          const target = stateRef.targets.get(row);
+          if (!target) {
+            return;
+          }
+          event.preventDefault();
+          event.stopPropagation();
+          const items = buildTradingMenuItems(
+            target,
+            stateRef.interactions?.toggleTrading,
+          );
+          showContextMenu({
+            x: event.clientX,
+            y: event.clientY,
+            items,
+          });
+        },
+        true,
+      );
+    }
+    state.interactions = interactions;
+    return (row, target) => {
+      state.targets.set(row, target);
+    };
+  }
+  function buildTradingMenuItems(target, toggleTrading) {
+    if (target.kind === "player") {
+      const tradeStopped = target.tradeStopped;
+      const disabled = !toggleTrading;
+      return [
+        {
+          label: tradeStopped ? "Start trading" : "Stop trading",
+          disabled,
+          onSelect:
+            disabled || !toggleTrading
+              ? undefined
+              : () => toggleTrading(target.playerIds, !tradeStopped),
+        },
+      ];
+    }
+    const labelSuffix =
+      target.playerIds.length > 0
+        ? target.groupType === "team"
+          ? " with team"
+          : " with clan"
+        : "";
+    const disabled = target.playerIds.length === 0 || !toggleTrading;
+    const allStopped = target.allStopped;
+    return [
+      {
+        label: `${allStopped ? "Start" : "Stop"} trading${labelSuffix}`,
+        disabled,
+        onSelect:
+          disabled || !toggleTrading
+            ? undefined
+            : () => toggleTrading(target.playerIds, !allStopped),
+      },
+    ];
+  }
   const TABLE_HEADERS = [
     { key: "label", label: "Clan / Player", align: "left" },
     { key: "tiles", label: "Tiles", align: "right" },
@@ -436,6 +511,10 @@
       view: leaf.view,
       headers: TABLE_HEADERS,
     });
+    const registerTradingContext = ensureTradingContextMenu(
+      tbody,
+      interactions,
+    );
     const players = [...snapshot.players].sort((a, b) =>
       comparePlayers({ a, b, sortState, snapshot, metricsCache }),
     );
@@ -449,6 +528,7 @@
         requestRender,
         metricsCache,
         interactions,
+        registerTradingContext,
       });
     }
     return container;
@@ -471,6 +551,10 @@
       view: leaf.view,
       headers: TABLE_HEADERS,
     });
+    const registerTradingContext = ensureTradingContextMenu(
+      tbody,
+      interactions,
+    );
     const groups = groupPlayers({
       players: snapshot.players,
       snapshot,
@@ -488,6 +572,7 @@
         groupType: "clan",
         metricsCache,
         interactions,
+        registerTradingContext,
       });
     }
     return container;
@@ -510,6 +595,10 @@
       view: leaf.view,
       headers: TABLE_HEADERS,
     });
+    const registerTradingContext = ensureTradingContextMenu(
+      tbody,
+      interactions,
+    );
     const groups = groupPlayers({
       players: snapshot.players,
       snapshot,
@@ -527,6 +616,7 @@
         groupType: "team",
         metricsCache,
         interactions,
+        registerTradingContext,
       });
     }
     return container;
@@ -958,7 +1048,7 @@
       requestRender,
       metricsCache,
     } = options;
-    const { interactions } = options;
+    const { registerTradingContext } = options;
     const metrics = getMetrics(player, snapshot, metricsCache);
     const rowKey = player.id;
     const expanded = leaf.expandedRows.has(rowKey);
@@ -966,26 +1056,11 @@
     tr.dataset.rowKey = rowKey;
     applyPersistentHover(tr, leaf, rowKey, "bg-slate-800/50");
     if (!player.isSelf) {
-      const handleContextMenu = (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        const tradeStopped = player.tradeStopped ?? false;
-        const playerIds = [player.id];
-        showContextMenu({
-          x: event.clientX,
-          y: event.clientY,
-          items: [
-            {
-              label: tradeStopped ? "Start trading" : "Stop trading",
-              disabled: !interactions?.toggleTrading,
-              onSelect: !interactions?.toggleTrading
-                ? undefined
-                : () => interactions.toggleTrading?.(playerIds, !tradeStopped),
-            },
-          ],
-        });
-      };
-      tr.addEventListener("contextmenu", handleContextMenu, { capture: true });
+      registerTradingContext?.(tr, {
+        kind: "player",
+        playerIds: [player.id],
+        tradeStopped: player.tradeStopped ?? false,
+      });
     }
     const firstCell = createElement(
       "td",
@@ -1037,6 +1112,7 @@
       groupType,
       metricsCache,
       interactions,
+      registerTradingContext,
     } = options;
     const groupKey = `${groupType}:${group.key}`;
     const expanded = leaf.expandedGroups.has(groupKey);
@@ -1046,43 +1122,19 @@
     );
     row.dataset.groupKey = groupKey;
     applyPersistentHover(row, leaf, groupKey, "bg-slate-800/60");
-    const handleContextMenu = (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      const actionablePlayers = group.players.filter(
-        (player) => !player.isSelf,
-      );
-      const actionableIds = Array.from(
-        new Set(actionablePlayers.map((p) => p.id)),
-      );
-      const allStopped =
-        actionableIds.length > 0 &&
-        actionablePlayers.every((player) => player.tradeStopped ?? false);
-      const labelSuffix =
-        actionableIds.length > 1
-          ? groupType === "team"
-            ? " with team"
-            : " with clan"
-          : "";
-      const label = `${allStopped ? "Start" : "Stop"} trading${labelSuffix}`;
-      showContextMenu({
-        x: event.clientX,
-        y: event.clientY,
-        items: [
-          {
-            label,
-            disabled:
-              actionableIds.length === 0 || !interactions?.toggleTrading,
-            onSelect:
-              actionableIds.length === 0 || !interactions?.toggleTrading
-                ? undefined
-                : () =>
-                    interactions.toggleTrading?.(actionableIds, !allStopped),
-          },
-        ],
-      });
-    };
-    row.addEventListener("contextmenu", handleContextMenu, { capture: true });
+    const actionablePlayers = group.players.filter((player) => !player.isSelf);
+    const actionableIds = Array.from(
+      new Set(actionablePlayers.map((p) => p.id)),
+    );
+    const allStopped =
+      actionableIds.length > 0 &&
+      actionablePlayers.every((player) => player.tradeStopped ?? false);
+    registerTradingContext?.(row, {
+      kind: "group",
+      playerIds: actionableIds,
+      groupType,
+      allStopped,
+    });
     const firstCell = createElement(
       "td",
       "border-b border-r border-slate-800 border-slate-900/80 px-3 py-2 align-top last:border-r-0",
@@ -1119,6 +1171,7 @@
           requestRender,
           metricsCache,
           interactions,
+          registerTradingContext,
         });
       }
     }
