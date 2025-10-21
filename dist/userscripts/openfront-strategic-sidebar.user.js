@@ -797,6 +797,23 @@
         return "text-slate-300";
     }
   }
+  function attachImmediateTileFocus(element, focus) {
+    element.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0 && event.button !== undefined) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      focus();
+    });
+    element.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.detail === 0) {
+        focus();
+      }
+    });
+  }
   function createCoordinateButton(summary) {
     if (!summary) {
       return createElement("span", "text-slate-500", "–");
@@ -809,9 +826,7 @@
     );
     button.type = "button";
     button.title = `Focus on ${label}`;
-    button.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
+    attachImmediateTileFocus(button, () => {
       focusTile(summary);
     });
     return button;
@@ -834,9 +849,7 @@
     const button = createElement("button", className, label);
     button.type = "button";
     button.title = `Focus on ${label}`;
-    button.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
+    attachImmediateTileFocus(button, () => {
       focusTile(position);
     });
     return button;
