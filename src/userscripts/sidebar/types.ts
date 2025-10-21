@@ -1,9 +1,4 @@
-export type ViewType =
-  | "players"
-  | "clanmates"
-  | "teams"
-  | "ships"
-  | "landmasses";
+export type ViewType = "players" | "clanmates" | "teams" | "ships";
 
 export type ShipType = "Transport" | "Trade Ship" | "Warship";
 
@@ -26,15 +21,6 @@ export interface ShipRecord {
   destination?: TileSummary;
   retreating: boolean;
   reachedTarget: boolean;
-}
-
-export interface LandmassRecord {
-  id: string;
-  ownerId: string;
-  ownerName: string;
-  tiles: number;
-  anchor?: TileSummary;
-  sequence: number;
 }
 
 export interface IncomingAttack {
@@ -101,7 +87,6 @@ export interface GameSnapshot {
   allianceDurationMs: number;
   currentTimeMs: number;
   ships: ShipRecord[];
-  landmasses: LandmassRecord[];
 }
 
 export type PanelOrientation = "horizontal" | "vertical";

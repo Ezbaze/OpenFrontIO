@@ -2,7 +2,6 @@ import {
   AlliancePact,
   GameSnapshot,
   IncomingAttack,
-  LandmassRecord,
   OutgoingAttack,
   PlayerRecord,
   ShipRecord,
@@ -11,7 +10,6 @@ import {
 } from "./types";
 
 const TICK_MILLISECONDS = 100;
-const LANDMASS_REFRESH_INTERVAL_TICKS = 50;
 
 type SnapshotListener = (snapshot: GameSnapshot) => void;
 
@@ -119,9 +117,6 @@ export class DataStore {
   private readonly shipOrigins: Map<string, TileSummary> = new Map();
   private readonly shipDestinations: Map<string, TileSummary> = new Map();
   private readonly shipManifests: Map<string, number> = new Map();
-  private landmassCache: { tick: number; records: LandmassRecord[] } | null =
-    null;
-  private landmassTrackingEnabled = false;
 
   constructor(initialSnapshot?: GameSnapshot) {
     this.snapshot = initialSnapshot ?? {
@@ -129,7 +124,6 @@ export class DataStore {
       allianceDurationMs: 0,
       currentTimeMs: Date.now(),
       ships: [],
-      landmasses: [],
     };
 
     if (typeof window !== "undefined") {
@@ -154,33 +148,8 @@ export class DataStore {
       ...snapshot,
       currentTimeMs: snapshot.currentTimeMs ?? Date.now(),
       ships: snapshot.ships ?? [],
-      landmasses: snapshot.landmasses ?? [],
     };
     this.notify();
-  }
-
-  setLandmassTrackingEnabled(enabled: boolean): void {
-    if (this.landmassTrackingEnabled === enabled) {
-      return;
-    }
-
-    this.landmassTrackingEnabled = enabled;
-
-    if (!enabled) {
-      this.landmassCache = null;
-      if (this.snapshot.landmasses.length > 0) {
-        this.snapshot = {
-          ...this.snapshot,
-          landmasses: [],
-        };
-        this.notify();
-      }
-      return;
-    }
-
-    if (this.game) {
-      this.refreshFromGame();
-    }
   }
 
   setTradingStopped(
@@ -326,7 +295,6 @@ export class DataStore {
       const discovered = this.findLiveGame();
       if (discovered) {
         this.game = discovered;
-        this.landmassCache = null;
         this.refreshFromGame();
         if (this.attachHandle !== undefined) {
           window.clearTimeout(this.attachHandle);
@@ -384,23 +352,18 @@ export class DataStore {
       const records = players.map((player) =>
         this.createPlayerRecord(player, currentTimeMs, localPlayer),
       );
-      const landmasses = this.landmassTrackingEnabled
-        ? this.resolveLandmassRecords(currentTick)
-        : [];
 
       this.snapshot = {
         players: records,
         allianceDurationMs,
         currentTimeMs,
         ships,
-        landmasses,
       };
       this.notify();
     } catch (error) {
       // If the game context changes while we're reading from it, try attaching again.
       console.warn("Failed to refresh sidebar data", error);
       this.game = null;
-      this.landmassCache = null;
       if (this.refreshHandle !== undefined) {
         window.clearInterval(this.refreshHandle);
         this.refreshHandle = undefined;
@@ -426,159 +389,6 @@ export class DataStore {
     ships.sort((a, b) => a.ownerName.localeCompare(b.ownerName));
     this.pruneStaleShipMemory(new Set(ships.map((ship) => ship.id)));
     return ships;
-  }
-
-  private resolveLandmassRecords(currentTick: number): LandmassRecord[] {
-    if (!this.game) {
-      this.landmassCache = null;
-      return [];
-    }
-
-    const cache = this.landmassCache;
-    if (
-      cache &&
-      cache.tick <= currentTick &&
-      currentTick - cache.tick < LANDMASS_REFRESH_INTERVAL_TICKS
-    ) {
-      return cache.records;
-    }
-
-    const records = this.createLandmassRecords();
-    this.landmassCache = { tick: currentTick, records };
-    return records;
-  }
-
-  private createLandmassRecords(): LandmassRecord[] {
-    if (!this.game) {
-      return [];
-    }
-
-    const visited = new Set<number>();
-    const ownerSequences = new Map<number, number>();
-    const records: LandmassRecord[] = [];
-
-    this.game.forEachTile((ref) => {
-      if (visited.has(ref)) {
-        return;
-      }
-
-      const ownerSmallId = this.getTileOwner(ref);
-      if (ownerSmallId === null || ownerSmallId === 0) {
-        return;
-      }
-
-      const component = this.collectLandmass(ref, ownerSmallId, visited);
-      if (!component) {
-        return;
-      }
-
-      const ownerId = String(ownerSmallId);
-      const ownerName = this.resolveNameBySmallId(ownerSmallId);
-      const sequence = (ownerSequences.get(ownerSmallId) ?? 0) + 1;
-      ownerSequences.set(ownerSmallId, sequence);
-
-      const anchorSummary =
-        this.describeTile(component.anchorRef) ??
-        (this.game
-          ? {
-              ref: component.anchorRef,
-              x: this.game.x(component.anchorRef),
-              y: this.game.y(component.anchorRef),
-              ownerId,
-              ownerName,
-            }
-          : undefined);
-
-      records.push({
-        id: `${ownerId}:${sequence}`,
-        ownerId,
-        ownerName,
-        tiles: component.tiles,
-        anchor: anchorSummary,
-        sequence,
-      });
-    });
-
-    return records;
-  }
-
-  private collectLandmass(
-    startRef: number,
-    ownerSmallId: number,
-    visited: Set<number>,
-  ): { tiles: number; anchorRef: number } | null {
-    if (!this.game) {
-      return null;
-    }
-
-    const queue: number[] = [startRef];
-    let index = 0;
-    visited.add(startRef);
-    let tiles = 0;
-    let anchorRef = startRef;
-    let anchorX = this.game.x(startRef);
-    let anchorY = this.game.y(startRef);
-
-    while (index < queue.length) {
-      const ref = queue[index++];
-      if (!this.isTileOwnedBy(ref, ownerSmallId)) {
-        continue;
-      }
-
-      tiles += 1;
-      const x = this.game.x(ref);
-      const y = this.game.y(ref);
-      if (y < anchorY || (y === anchorY && x < anchorX)) {
-        anchorRef = ref;
-        anchorX = x;
-        anchorY = y;
-      }
-
-      const neighbors = this.game.neighbors(ref) ?? [];
-      for (const neighbor of neighbors) {
-        if (visited.has(neighbor)) {
-          continue;
-        }
-        if (!this.isTileOwnedBy(neighbor, ownerSmallId)) {
-          continue;
-        }
-        visited.add(neighbor);
-        queue.push(neighbor);
-      }
-    }
-
-    if (tiles === 0) {
-      return null;
-    }
-
-    return { tiles, anchorRef };
-  }
-
-  private isTileOwnedBy(ref: number, ownerSmallId: number): boolean {
-    const owner = this.getTileOwner(ref);
-    return owner !== null && owner === ownerSmallId;
-  }
-
-  private getTileOwner(ref: number): number | null {
-    if (!this.game) {
-      return null;
-    }
-
-    try {
-      if (!this.game.hasOwner(ref)) {
-        return null;
-      }
-    } catch (error) {
-      console.warn("Failed to inspect tile ownership", error);
-      return null;
-    }
-
-    try {
-      return this.game.ownerID(ref);
-    } catch (error) {
-      console.warn("Failed to read tile owner id", error);
-      return null;
-    }
   }
 
   private createShipRecord(unit: UnitViewLike, type: ShipType): ShipRecord {

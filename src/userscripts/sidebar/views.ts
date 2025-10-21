@@ -1,6 +1,5 @@
 import {
   GameSnapshot,
-  LandmassRecord,
   PanelLeafNode,
   PlayerRecord,
   ShipRecord,
@@ -23,8 +22,6 @@ type RequestRender = () => void;
 type Metrics = ReturnType<typeof computePlayerMetrics>;
 
 export interface ViewLifecycleCallbacks {
-  onLandmassMount?: () => void;
-  onLandmassUnmount?: () => void;
   registerCleanup?: (cleanup: () => void) => void;
 }
 
@@ -79,12 +76,6 @@ const SHIP_HEADERS: TableHeader[] = [
   { key: "current", label: "Current", align: "left" },
   { key: "destination", label: "Destination", align: "left" },
   { key: "status", label: "Status", align: "left" },
-];
-
-const LANDMASS_HEADERS: TableHeader[] = [
-  { key: "label", label: "Player", align: "left" },
-  { key: "tiles", label: "Tiles", align: "right" },
-  { key: "origin", label: "Location", align: "left" },
 ];
 
 const DEFAULT_SORT_STATE: SortState = { key: "tiles", direction: "desc" };
@@ -148,17 +139,6 @@ export function buildViewContent(
       });
     case "ships":
       return renderShipView({
-        leaf,
-        snapshot,
-        requestRender,
-        sortState,
-        onSort: handleSort,
-        existingContainer,
-        actions: viewActions,
-        lifecycle,
-      });
-    case "landmasses":
-      return renderLandmassView({
         leaf,
         snapshot,
         requestRender,
@@ -391,81 +371,6 @@ function renderShipView(options: ViewRenderOptions): HTMLElement {
   return container;
 }
 
-function renderLandmassView(options: ViewRenderOptions): HTMLElement {
-  const { leaf, snapshot, sortState, onSort, existingContainer, lifecycle } =
-    options;
-  lifecycle?.onLandmassMount?.();
-  const { container, tbody } = createTableShell({
-    sortState,
-    onSort,
-    existingContainer,
-    view: leaf.view,
-    headers: LANDMASS_HEADERS,
-  });
-
-  lifecycle?.registerCleanup?.(() => {
-    lifecycle.onLandmassUnmount?.();
-  });
-
-  const playerLookup = new Map(
-    snapshot.players.map((player) => [player.id, player]),
-  );
-  const landmasses = [...snapshot.landmasses].sort((a, b) =>
-    compareLandmasses({ a, b, sortState }),
-  );
-
-  for (const landmass of landmasses) {
-    const rowKey = `landmass:${landmass.id}`;
-    const row = createElement("tr", "hover:bg-slate-800/50 transition-colors");
-    applyPersistentHover(row, leaf, rowKey, "bg-slate-800/50");
-    row.dataset.rowKey = rowKey;
-
-    for (const column of LANDMASS_HEADERS) {
-      const td = createElement(
-        "td",
-        cellClassForColumn(column, getLandmassExtraCellClass(column.key)),
-      );
-      switch (column.key) {
-        case "label": {
-          const ownerRecord = playerLookup.get(landmass.ownerId);
-          const focus = ownerRecord?.position ?? landmass.anchor;
-          const wrapper = createElement("div", "flex flex-col gap-0.5");
-          wrapper.appendChild(
-            createPlayerNameElement(landmass.ownerName, focus, {
-              asBlock: true,
-              className:
-                "block font-semibold text-slate-100 transition-colors hover:text-sky-200",
-            }),
-          );
-          wrapper.appendChild(
-            createElement(
-              "span",
-              "text-[0.65rem] uppercase tracking-wide text-slate-400",
-              `Landmass #${landmass.sequence}`,
-            ),
-          );
-          td.appendChild(wrapper);
-          break;
-        }
-        case "tiles":
-          td.textContent = formatNumber(landmass.tiles);
-          break;
-        case "origin":
-          td.appendChild(createCoordinateButton(landmass.anchor));
-          break;
-        default:
-          td.textContent = "";
-          break;
-      }
-      row.appendChild(td);
-    }
-
-    tbody.appendChild(row);
-  }
-
-  return container;
-}
-
 function createTableShell(options: {
   sortState: SortState;
   onSort: (key: SortKey) => void;
@@ -579,19 +484,6 @@ function getShipExtraCellClass(key: SortKey): string {
     case "origin":
     case "current":
     case "destination":
-      return "text-[0.75rem] text-slate-300";
-    default:
-      return "text-slate-300";
-  }
-}
-
-function getLandmassExtraCellClass(key: SortKey): string {
-  switch (key) {
-    case "label":
-      return "font-semibold text-slate-100";
-    case "tiles":
-      return "font-mono text-[0.75rem] text-slate-200";
-    case "origin":
       return "text-[0.75rem] text-slate-300";
     default:
       return "text-slate-300";
@@ -712,44 +604,6 @@ function getShipSortValue(ship: ShipRecord, key: SortKey): number | string {
       return tileSortValue(ship.destination);
     case "status":
       return deriveShipStatus(ship).toLowerCase();
-    default:
-      return 0;
-  }
-}
-
-function compareLandmasses(options: {
-  a: LandmassRecord;
-  b: LandmassRecord;
-  sortState: SortState;
-}): number {
-  const { a, b, sortState } = options;
-  const valueA = getLandmassSortValue(a, sortState.key);
-  const valueB = getLandmassSortValue(b, sortState.key);
-  const result = compareSortValues(valueA, valueB, sortState.direction);
-  if (result !== 0) {
-    return result;
-  }
-  const ownerCompare = a.ownerName.localeCompare(b.ownerName, undefined, {
-    sensitivity: "base",
-  });
-  if (ownerCompare !== 0) {
-    return ownerCompare;
-  }
-  return a.sequence - b.sequence;
-}
-
-function getLandmassSortValue(
-  landmass: LandmassRecord,
-  key: SortKey,
-): number | string {
-  switch (key) {
-    case "label":
-    case "owner":
-      return landmass.ownerName.toLowerCase();
-    case "tiles":
-      return landmass.tiles;
-    case "origin":
-      return tileSortValue(landmass.anchor);
     default:
       return 0;
   }
