@@ -594,6 +594,27 @@ function getShipExtraCellClass(key: SortKey): string {
   }
 }
 
+function attachImmediateTileFocus(
+  element: HTMLButtonElement,
+  focus: () => void,
+): void {
+  element.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0 && event.button !== undefined) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    focus();
+  });
+  element.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.detail === 0) {
+      focus();
+    }
+  });
+}
+
 function createCoordinateButton(summary?: TileSummary): HTMLElement {
   if (!summary) {
     return createElement("span", "text-slate-500", "–");
@@ -606,9 +627,7 @@ function createCoordinateButton(summary?: TileSummary): HTMLElement {
   );
   button.type = "button";
   button.title = `Focus on ${label}`;
-  button.addEventListener("click", (event) => {
-    event.preventDefault();
-    event.stopPropagation();
+  attachImmediateTileFocus(button, () => {
     focusTile(summary);
   });
   return button;
@@ -638,9 +657,7 @@ function createPlayerNameElement(
   const button = createElement("button", className, label);
   button.type = "button";
   button.title = `Focus on ${label}`;
-  button.addEventListener("click", (event) => {
-    event.preventDefault();
-    event.stopPropagation();
+  attachImmediateTileFocus(button, () => {
     focusTile(position);
   });
   return button;
