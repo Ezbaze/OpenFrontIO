@@ -22,7 +22,6 @@ const VIEW_OPTIONS: { value: ViewType; label: string }[] = [
   { value: "clanmates", label: "Clanmates" },
   { value: "teams", label: "Teams" },
   { value: "ships", label: "Ships" },
-  { value: "landmasses", label: "Landmasses" },
 ];
 
 const SIDEBAR_STYLE_ID = "openfront-strategic-sidebar-styles";
@@ -74,7 +73,6 @@ const DEFAULT_SORT_STATES: Record<ViewType, SortState> = {
   clanmates: { key: "tiles", direction: "desc" },
   teams: { key: "tiles", direction: "desc" },
   ships: { key: "owner", direction: "asc" },
-  landmasses: { key: "tiles", direction: "desc" },
 };
 
 function createLeaf(view: ViewType): PanelLeafNode {
@@ -89,7 +87,6 @@ function createLeaf(view: ViewType): PanelLeafNode {
       clanmates: { ...DEFAULT_SORT_STATES.clanmates },
       teams: { ...DEFAULT_SORT_STATES.teams },
       ships: { ...DEFAULT_SORT_STATES.ships },
-      landmasses: { ...DEFAULT_SORT_STATES.landmasses },
     },
     scrollTop: 0,
     scrollLeft: 0,
@@ -117,7 +114,6 @@ export class SidebarApp {
   private readonly store: DataStore;
   private snapshot: GameSnapshot;
   private rootNode: PanelNode;
-  private readonly activeLandmassLeaves = new Set<string>();
   private readonly overlayElements = new Map<
     OverlaySelector,
     OverlayRegistration
@@ -739,7 +735,6 @@ export class SidebarApp {
       if (previousCleanup) {
         previousCleanup();
       }
-      this.setLeafLandmassActive(leaf, false);
     }
 
     const newCleanup = lifecycle.getCleanup();
@@ -779,8 +774,6 @@ export class SidebarApp {
   } {
     let cleanup: (() => void) | undefined;
     const callbacks: ViewLifecycleCallbacks = {
-      onLandmassMount: () => this.setLeafLandmassActive(leaf, true),
-      onLandmassUnmount: () => this.setLeafLandmassActive(leaf, false),
       registerCleanup: (fn) => {
         cleanup = fn;
       },
@@ -791,29 +784,12 @@ export class SidebarApp {
     };
   }
 
-  private setLeafLandmassActive(leaf: PanelLeafNode, active: boolean): void {
-    const isActive = this.activeLandmassLeaves.has(leaf.id);
-    if (active) {
-      if (isActive) {
-        return;
-      }
-      this.activeLandmassLeaves.add(leaf.id);
-    } else {
-      if (!isActive) {
-        return;
-      }
-      this.activeLandmassLeaves.delete(leaf.id);
-    }
-    this.store.setLandmassTrackingEnabled(this.activeLandmassLeaves.size > 0);
-  }
-
   private cleanupLeafView(leaf: PanelLeafNode): void {
     const cleanup = leaf.viewCleanup;
     leaf.viewCleanup = undefined;
     if (cleanup) {
       cleanup();
     }
-    this.setLeafLandmassActive(leaf, false);
   }
 
   private bindLeafContainerInteractions(
