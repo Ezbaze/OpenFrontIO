@@ -22,6 +22,7 @@ const VIEW_OPTIONS: { value: ViewType; label: string }[] = [
   { value: "clanmates", label: "Clanmates" },
   { value: "teams", label: "Teams" },
   { value: "ships", label: "Ships" },
+  { value: "player", label: "Player panel" },
 ];
 
 const SIDEBAR_STYLE_ID = "openfront-strategic-sidebar-styles";
@@ -73,6 +74,7 @@ const DEFAULT_SORT_STATES: Record<ViewType, SortState> = {
   clanmates: { key: "tiles", direction: "desc" },
   teams: { key: "tiles", direction: "desc" },
   ships: { key: "owner", direction: "asc" },
+  player: { key: "tiles", direction: "desc" },
 };
 
 function createLeaf(view: ViewType): PanelLeafNode {
@@ -87,6 +89,7 @@ function createLeaf(view: ViewType): PanelLeafNode {
       clanmates: { ...DEFAULT_SORT_STATES.clanmates },
       teams: { ...DEFAULT_SORT_STATES.teams },
       ships: { ...DEFAULT_SORT_STATES.ships },
+      player: { ...DEFAULT_SORT_STATES.player },
     },
     scrollTop: 0,
     scrollLeft: 0,
@@ -135,6 +138,7 @@ export class SidebarApp {
     this.viewActions = {
       toggleTrading: (playerIds, stopped) =>
         this.store.setTradingStopped(playerIds, stopped),
+      showPlayerDetails: (playerId) => this.showPlayerDetails(playerId),
     };
     this.renderLayout();
     this.store.subscribe((snapshot) => {
@@ -835,6 +839,16 @@ export class SidebarApp {
     }
     leaf.hoveredRowElement = null;
     leaf.hoveredRowKey = undefined;
+  }
+
+  private showPlayerDetails(playerId: string): void {
+    for (const leaf of this.getLeaves()) {
+      if (leaf.view !== "player") {
+        continue;
+      }
+      leaf.selectedPlayerId = playerId;
+      this.refreshLeafContent(leaf);
+    }
   }
 
   private getLeaves(

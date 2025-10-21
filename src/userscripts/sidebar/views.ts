@@ -27,10 +27,12 @@ export interface ViewLifecycleCallbacks {
 
 export interface ViewActionHandlers {
   toggleTrading: (playerIds: string[], stopped: boolean) => void;
+  showPlayerDetails: (playerId: string) => void;
 }
 
 const DEFAULT_ACTIONS: ViewActionHandlers = {
   toggleTrading: () => undefined,
+  showPlayerDetails: () => undefined,
 };
 
 interface AggregatedRow {
@@ -148,6 +150,17 @@ export function buildViewContent(
         actions: viewActions,
         lifecycle,
       });
+    case "player":
+      return renderPlayerPanelView({
+        leaf,
+        snapshot,
+        requestRender,
+        sortState,
+        onSort: handleSort,
+        existingContainer,
+        actions: viewActions,
+        lifecycle,
+      });
     default:
       return createElement("div", "text-slate-200 text-sm", "Unsupported view");
   }
@@ -190,15 +203,8 @@ interface ViewRenderOptions {
 }
 
 function renderPlayersView(options: ViewRenderOptions): HTMLElement {
-  const {
-    leaf,
-    snapshot,
-    requestRender,
-    sortState,
-    onSort,
-    existingContainer,
-    actions,
-  } = options;
+  const { leaf, snapshot, sortState, onSort, existingContainer, actions } =
+    options;
   const metricsCache = new Map<string, Metrics>();
   const { container, tbody } = createTableShell({
     sortState,
@@ -218,8 +224,8 @@ function renderPlayersView(options: ViewRenderOptions): HTMLElement {
       leaf,
       snapshot,
       tbody,
-      requestRender,
       metricsCache,
+      actions,
     });
   }
 
@@ -262,6 +268,7 @@ function renderClanView(options: ViewRenderOptions): HTMLElement {
       requestRender,
       groupType: "clan",
       metricsCache,
+      actions,
     });
   }
 
@@ -304,6 +311,7 @@ function renderTeamView(options: ViewRenderOptions): HTMLElement {
       requestRender,
       groupType: "team",
       metricsCache,
+      actions,
     });
   }
 
@@ -368,6 +376,102 @@ function renderShipView(options: ViewRenderOptions): HTMLElement {
     tbody.appendChild(row);
   }
 
+  return container;
+}
+
+function renderPlayerPanelView(options: ViewRenderOptions): HTMLElement {
+  const { leaf, snapshot, existingContainer } = options;
+  const containerClass =
+    "relative flex-1 overflow-auto border border-slate-900/70 bg-slate-950/60 backdrop-blur-sm";
+  const canReuse =
+    !!existingContainer &&
+    existingContainer.dataset.sidebarRole === "player-panel" &&
+    existingContainer.dataset.sidebarView === leaf.view;
+  const container = canReuse
+    ? existingContainer
+    : createElement("div", containerClass);
+  container.className = containerClass;
+  container.dataset.sidebarRole = "player-panel";
+  container.dataset.sidebarView = leaf.view;
+
+  const content = createElement(
+    "div",
+    "flex min-h-full flex-col gap-6 p-4 text-sm text-slate-100",
+  );
+
+  const playerId = leaf.selectedPlayerId;
+  if (!playerId) {
+    content.appendChild(
+      createElement(
+        "p",
+        "text-slate-400 italic",
+        "Select a player from any table to view their details.",
+      ),
+    );
+  } else {
+    const player = snapshot.players.find((entry) => entry.id === playerId);
+    if (!player) {
+      content.appendChild(
+        createElement(
+          "p",
+          "text-slate-400 italic",
+          "That player is no longer available in the latest snapshot.",
+        ),
+      );
+    } else {
+      const header = createElement("div", "space-y-3");
+      const title = createElement(
+        "div",
+        "flex flex-wrap items-baseline justify-between gap-3",
+      );
+      const name = createPlayerNameElement(player.name, player.position, {
+        asBlock: true,
+        className:
+          "text-lg font-semibold text-slate-100 transition-colors hover:text-sky-200",
+      });
+      title.appendChild(name);
+
+      const meta = [player.clan, player.team].filter(Boolean).join(" • ");
+      if (meta) {
+        title.appendChild(
+          createElement(
+            "div",
+            "text-xs uppercase tracking-wide text-slate-400",
+            meta,
+          ),
+        );
+      }
+      header.appendChild(title);
+
+      const summary = createElement(
+        "div",
+        "grid gap-3 sm:grid-cols-3 text-[0.75rem]",
+      );
+      summary.appendChild(
+        createSummaryStat("Tiles", formatNumber(player.tiles)),
+      );
+      summary.appendChild(createSummaryStat("Gold", formatNumber(player.gold)));
+      summary.appendChild(
+        createSummaryStat("Troops", formatNumber(player.troops)),
+      );
+      header.appendChild(summary);
+
+      if (player.tradeStopped) {
+        header.appendChild(
+          createElement(
+            "p",
+            "text-[0.7rem] font-semibold uppercase tracking-wide text-amber-300",
+            "Trading is currently stopped with this player.",
+          ),
+        );
+      }
+
+      content.appendChild(header);
+      content.appendChild(renderPlayerDetails(player, snapshot));
+    }
+  }
+
+  container.replaceChildren(content);
   return container;
 }
 
@@ -840,14 +944,13 @@ function appendPlayerRows(options: {
   leaf: PanelLeafNode;
   snapshot: GameSnapshot;
   tbody: HTMLElement;
-  requestRender: RequestRender;
   metricsCache: Map<string, Metrics>;
+  actions: ViewActionHandlers;
 }) {
-  const { player, indent, leaf, snapshot, tbody, requestRender, metricsCache } =
+  const { player, indent, leaf, snapshot, tbody, metricsCache, actions } =
     options;
   const metrics = getMetrics(player, snapshot, metricsCache);
   const rowKey = player.id;
-  const expanded = leaf.expandedRows.has(rowKey);
 
   const tr = createElement("tr", "hover:bg-slate-800/50 transition-colors");
   tr.dataset.rowKey = rowKey;
@@ -871,17 +974,6 @@ function appendPlayerRows(options: {
       subtitle:
         [player.clan, player.team].filter(Boolean).join(" • ") || undefined,
       indent,
-      expanded,
-      toggleAttribute: "data-player-toggle",
-      rowKey,
-      onToggle: (next) => {
-        if (next) {
-          leaf.expandedRows.add(rowKey);
-        } else {
-          leaf.expandedRows.delete(rowKey);
-        }
-        requestRender();
-      },
       focus: player.position,
     }),
   );
@@ -890,18 +982,9 @@ function appendPlayerRows(options: {
   appendMetricCells(tr, metrics, player);
   tbody.appendChild(tr);
 
-  if (expanded) {
-    const detailRow = createElement("tr", "bg-slate-900/80 backdrop-blur-sm");
-    applyPersistentHover(detailRow, leaf, rowKey, "bg-slate-900/70");
-    const detailCell = createElement(
-      "td",
-      "border-b border-slate-800 px-4 py-4",
-    );
-    detailCell.colSpan = TABLE_HEADERS.length;
-    detailCell.appendChild(renderPlayerDetails(player, snapshot));
-    detailRow.appendChild(detailCell);
-    tbody.appendChild(detailRow);
-  }
+  tr.addEventListener("click", () => {
+    actions.showPlayerDetails(player.id);
+  });
 }
 
 function appendGroupRows(options: {
@@ -912,6 +995,7 @@ function appendGroupRows(options: {
   requestRender: RequestRender;
   groupType: "clan" | "team";
   metricsCache: Map<string, Metrics>;
+  actions: ViewActionHandlers;
 }) {
   const {
     group,
@@ -921,6 +1005,7 @@ function appendGroupRows(options: {
     requestRender,
     groupType,
     metricsCache,
+    actions,
   } = options;
   const groupKey = `${groupType}:${group.key}`;
   const expanded = leaf.expandedGroups.has(groupKey);
@@ -974,8 +1059,8 @@ function appendGroupRows(options: {
         leaf,
         snapshot,
         tbody,
-        requestRender,
         metricsCache,
+        actions,
       });
     }
   }
@@ -1176,14 +1261,34 @@ function createBadge(
   return badge;
 }
 
+function createSummaryStat(label: string, value: string): HTMLElement {
+  const wrapper = createElement(
+    "div",
+    "rounded-md border border-slate-800/70 bg-slate-900/70 px-3 py-2",
+  );
+  const title = createElement(
+    "div",
+    "text-[0.65rem] uppercase tracking-wide text-slate-400",
+    label,
+  );
+  const content = createElement(
+    "div",
+    "font-mono text-base text-slate-100",
+    value,
+  );
+  wrapper.appendChild(title);
+  wrapper.appendChild(content);
+  return wrapper;
+}
+
 function createLabelBlock(options: {
   label: string;
   subtitle?: string;
   indent: number;
-  expanded: boolean;
-  toggleAttribute: string;
-  rowKey: string;
-  onToggle: (expanded: boolean) => void;
+  expanded?: boolean;
+  toggleAttribute?: string;
+  rowKey?: string;
+  onToggle?: (expanded: boolean) => void;
   focus?: TileSummary;
 }): HTMLElement {
   const {
@@ -1198,20 +1303,6 @@ function createLabelBlock(options: {
   } = options;
   const container = createElement("div", "flex items-start gap-3");
   container.style.marginLeft = `${indent * 1.5}rem`;
-
-  const button = createElement(
-    "button",
-    "flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-slate-700 bg-slate-800 text-slate-300 hover:text-slate-50 focus:outline-none focus:ring-2 focus:ring-sky-500/60 transition-colors",
-  );
-  button.setAttribute(toggleAttribute, rowKey);
-  button.type = "button";
-  button.title = expanded ? "Collapse" : "Expand";
-  button.textContent = expanded ? "−" : "+";
-  button.addEventListener("click", (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    onToggle(!expanded);
-  });
 
   const labelBlock = createElement("div", "space-y-1");
   const labelEl = createPlayerNameElement(label, focus, {
@@ -1230,7 +1321,22 @@ function createLabelBlock(options: {
     );
   }
 
-  container.appendChild(button);
+  if (toggleAttribute && rowKey && typeof expanded === "boolean" && onToggle) {
+    const button = createElement(
+      "button",
+      "flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-slate-700 bg-slate-800 text-slate-300 hover:text-slate-50 focus:outline-none focus:ring-2 focus:ring-sky-500/60 transition-colors",
+    );
+    button.setAttribute(toggleAttribute, rowKey);
+    button.type = "button";
+    button.title = expanded ? "Collapse" : "Expand";
+    button.textContent = expanded ? "−" : "+";
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      onToggle(!expanded);
+    });
+    container.appendChild(button);
+  }
   container.appendChild(labelBlock);
   return container;
 }

@@ -299,6 +299,7 @@
 
   const DEFAULT_ACTIONS = {
     toggleTrading: () => undefined,
+    showPlayerDetails: () => undefined,
   };
   const TABLE_HEADERS = [
     { key: "label", label: "Clan / Player", align: "left" },
@@ -393,6 +394,17 @@
           actions: viewActions,
           lifecycle,
         });
+      case "player":
+        return renderPlayerPanelView({
+          leaf,
+          snapshot,
+          requestRender,
+          sortState,
+          onSort: handleSort,
+          existingContainer,
+          actions: viewActions,
+          lifecycle,
+        });
       default:
         return createElement(
           "div",
@@ -425,15 +437,8 @@
     }
   }
   function renderPlayersView(options) {
-    const {
-      leaf,
-      snapshot,
-      requestRender,
-      sortState,
-      onSort,
-      existingContainer,
-      actions,
-    } = options;
+    const { leaf, snapshot, sortState, onSort, existingContainer, actions } =
+      options;
     const metricsCache = new Map();
     const { container, tbody } = createTableShell({
       sortState,
@@ -452,8 +457,8 @@
         leaf,
         snapshot,
         tbody,
-        requestRender,
         metricsCache,
+        actions,
       });
     }
     registerContextMenuDelegation(container, actions);
@@ -493,6 +498,7 @@
         requestRender,
         groupType: "clan",
         metricsCache,
+        actions,
       });
     }
     registerContextMenuDelegation(container, actions);
@@ -532,6 +538,7 @@
         requestRender,
         groupType: "team",
         metricsCache,
+        actions,
       });
     }
     registerContextMenuDelegation(container, actions);
@@ -593,6 +600,96 @@
       }
       tbody.appendChild(row);
     }
+    return container;
+  }
+  function renderPlayerPanelView(options) {
+    const { leaf, snapshot, existingContainer } = options;
+    const containerClass =
+      "relative flex-1 overflow-auto border border-slate-900/70 bg-slate-950/60 backdrop-blur-sm";
+    const canReuse =
+      !!existingContainer &&
+      existingContainer.dataset.sidebarRole === "player-panel" &&
+      existingContainer.dataset.sidebarView === leaf.view;
+    const container = canReuse
+      ? existingContainer
+      : createElement("div", containerClass);
+    container.className = containerClass;
+    container.dataset.sidebarRole = "player-panel";
+    container.dataset.sidebarView = leaf.view;
+    const content = createElement(
+      "div",
+      "flex min-h-full flex-col gap-6 p-4 text-sm text-slate-100",
+    );
+    const playerId = leaf.selectedPlayerId;
+    if (!playerId) {
+      content.appendChild(
+        createElement(
+          "p",
+          "text-slate-400 italic",
+          "Select a player from any table to view their details.",
+        ),
+      );
+    } else {
+      const player = snapshot.players.find((entry) => entry.id === playerId);
+      if (!player) {
+        content.appendChild(
+          createElement(
+            "p",
+            "text-slate-400 italic",
+            "That player is no longer available in the latest snapshot.",
+          ),
+        );
+      } else {
+        const header = createElement("div", "space-y-3");
+        const title = createElement(
+          "div",
+          "flex flex-wrap items-baseline justify-between gap-3",
+        );
+        const name = createPlayerNameElement(player.name, player.position, {
+          asBlock: true,
+          className:
+            "text-lg font-semibold text-slate-100 transition-colors hover:text-sky-200",
+        });
+        title.appendChild(name);
+        const meta = [player.clan, player.team].filter(Boolean).join(" • ");
+        if (meta) {
+          title.appendChild(
+            createElement(
+              "div",
+              "text-xs uppercase tracking-wide text-slate-400",
+              meta,
+            ),
+          );
+        }
+        header.appendChild(title);
+        const summary = createElement(
+          "div",
+          "grid gap-3 sm:grid-cols-3 text-[0.75rem]",
+        );
+        summary.appendChild(
+          createSummaryStat("Tiles", formatNumber(player.tiles)),
+        );
+        summary.appendChild(
+          createSummaryStat("Gold", formatNumber(player.gold)),
+        );
+        summary.appendChild(
+          createSummaryStat("Troops", formatNumber(player.troops)),
+        );
+        header.appendChild(summary);
+        if (player.tradeStopped) {
+          header.appendChild(
+            createElement(
+              "p",
+              "text-[0.7rem] font-semibold uppercase tracking-wide text-amber-300",
+              "Trading is currently stopped with this player.",
+            ),
+          );
+        }
+        content.appendChild(header);
+        content.appendChild(renderPlayerDetails(player, snapshot));
+      }
+    }
+    container.replaceChildren(content);
     return container;
   }
   function createTableShell(options) {
@@ -987,18 +1084,10 @@
     container.dataset.contextMenuDelegated = "true";
   }
   function appendPlayerRows(options) {
-    const {
-      player,
-      indent,
-      leaf,
-      snapshot,
-      tbody,
-      requestRender,
-      metricsCache,
-    } = options;
+    const { player, indent, leaf, snapshot, tbody, metricsCache, actions } =
+      options;
     const metrics = getMetrics(player, snapshot, metricsCache);
     const rowKey = player.id;
-    const expanded = leaf.expandedRows.has(rowKey);
     const tr = createElement("tr", "hover:bg-slate-800/50 transition-colors");
     tr.dataset.rowKey = rowKey;
     applyPersistentHover(tr, leaf, rowKey, "bg-slate-800/50");
@@ -1019,35 +1108,15 @@
         subtitle:
           [player.clan, player.team].filter(Boolean).join(" • ") || undefined,
         indent,
-        expanded,
-        toggleAttribute: "data-player-toggle",
-        rowKey,
-        onToggle: (next) => {
-          if (next) {
-            leaf.expandedRows.add(rowKey);
-          } else {
-            leaf.expandedRows.delete(rowKey);
-          }
-          requestRender();
-        },
         focus: player.position,
       }),
     );
     tr.appendChild(firstCell);
     appendMetricCells(tr, metrics, player);
     tbody.appendChild(tr);
-    if (expanded) {
-      const detailRow = createElement("tr", "bg-slate-900/80 backdrop-blur-sm");
-      applyPersistentHover(detailRow, leaf, rowKey, "bg-slate-900/70");
-      const detailCell = createElement(
-        "td",
-        "border-b border-slate-800 px-4 py-4",
-      );
-      detailCell.colSpan = TABLE_HEADERS.length;
-      detailCell.appendChild(renderPlayerDetails(player, snapshot));
-      detailRow.appendChild(detailCell);
-      tbody.appendChild(detailRow);
-    }
+    tr.addEventListener("click", () => {
+      actions.showPlayerDetails(player.id);
+    });
   }
   function appendGroupRows(options) {
     const {
@@ -1058,6 +1127,7 @@
       requestRender,
       groupType,
       metricsCache,
+      actions,
     } = options;
     const groupKey = `${groupType}:${group.key}`;
     const expanded = leaf.expandedGroups.has(groupKey);
@@ -1106,8 +1176,8 @@
           leaf,
           snapshot,
           tbody,
-          requestRender,
           metricsCache,
+          actions,
         });
       }
     }
@@ -1274,6 +1344,25 @@
     );
     return badge;
   }
+  function createSummaryStat(label, value) {
+    const wrapper = createElement(
+      "div",
+      "rounded-md border border-slate-800/70 bg-slate-900/70 px-3 py-2",
+    );
+    const title = createElement(
+      "div",
+      "text-[0.65rem] uppercase tracking-wide text-slate-400",
+      label,
+    );
+    const content = createElement(
+      "div",
+      "font-mono text-base text-slate-100",
+      value,
+    );
+    wrapper.appendChild(title);
+    wrapper.appendChild(content);
+    return wrapper;
+  }
   function createLabelBlock(options) {
     const {
       label,
@@ -1287,19 +1376,6 @@
     } = options;
     const container = createElement("div", "flex items-start gap-3");
     container.style.marginLeft = `${indent * 1.5}rem`;
-    const button = createElement(
-      "button",
-      "flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-slate-700 bg-slate-800 text-slate-300 hover:text-slate-50 focus:outline-none focus:ring-2 focus:ring-sky-500/60 transition-colors",
-    );
-    button.setAttribute(toggleAttribute, rowKey);
-    button.type = "button";
-    button.title = expanded ? "Collapse" : "Expand";
-    button.textContent = expanded ? "−" : "+";
-    button.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      onToggle(!expanded);
-    });
     const labelBlock = createElement("div", "space-y-1");
     const labelEl = createPlayerNameElement(label, focus, {
       asBlock: true,
@@ -1316,7 +1392,27 @@
         ),
       );
     }
-    container.appendChild(button);
+    if (
+      toggleAttribute &&
+      rowKey &&
+      typeof expanded === "boolean" &&
+      onToggle
+    ) {
+      const button = createElement(
+        "button",
+        "flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-slate-700 bg-slate-800 text-slate-300 hover:text-slate-50 focus:outline-none focus:ring-2 focus:ring-sky-500/60 transition-colors",
+      );
+      button.setAttribute(toggleAttribute, rowKey);
+      button.type = "button";
+      button.title = expanded ? "Collapse" : "Expand";
+      button.textContent = expanded ? "−" : "+";
+      button.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onToggle(!expanded);
+      });
+      container.appendChild(button);
+    }
     container.appendChild(labelBlock);
     return container;
   }
@@ -1616,6 +1712,7 @@
     { value: "clanmates", label: "Clanmates" },
     { value: "teams", label: "Teams" },
     { value: "ships", label: "Ships" },
+    { value: "player", label: "Player panel" },
   ];
   const SIDEBAR_STYLE_ID = "openfront-strategic-sidebar-styles";
   function ensureSidebarStyles() {
@@ -1654,6 +1751,7 @@
     clanmates: { key: "tiles", direction: "desc" },
     teams: { key: "tiles", direction: "desc" },
     ships: { key: "owner", direction: "asc" },
+    player: { key: "tiles", direction: "desc" },
   };
   function createLeaf(view) {
     return {
@@ -1667,6 +1765,7 @@
         clanmates: { ...DEFAULT_SORT_STATES.clanmates },
         teams: { ...DEFAULT_SORT_STATES.teams },
         ships: { ...DEFAULT_SORT_STATES.ships },
+        player: { ...DEFAULT_SORT_STATES.player },
       },
       scrollTop: 0,
       scrollLeft: 0,
@@ -1698,6 +1797,7 @@
       this.viewActions = {
         toggleTrading: (playerIds, stopped) =>
           this.store.setTradingStopped(playerIds, stopped),
+        showPlayerDetails: (playerId) => this.showPlayerDetails(playerId),
       };
       this.renderLayout();
       this.store.subscribe((snapshot) => {
@@ -2314,6 +2414,15 @@
       }
       leaf.hoveredRowElement = null;
       leaf.hoveredRowKey = undefined;
+    }
+    showPlayerDetails(playerId) {
+      for (const leaf of this.getLeaves()) {
+        if (leaf.view !== "player") {
+          continue;
+        }
+        leaf.selectedPlayerId = playerId;
+        this.refreshLeafContent(leaf);
+      }
     }
     getLeaves(node = this.rootNode, acc = []) {
       if (node.type === "leaf") {

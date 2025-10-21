@@ -1,4 +1,4 @@
-export type ViewType = "players" | "clanmates" | "teams" | "ships";
+export type ViewType = "players" | "clanmates" | "teams" | "ships" | "player";
 
 export type ShipType = "Transport" | "Trade Ship" | "Warship";
 
@@ -130,6 +130,7 @@ export interface PanelLeafNode {
   scrollLeft: number;
   hoveredRowKey?: string;
   hoveredRowElement?: HTMLElement | null;
+  selectedPlayerId?: string;
   contentContainer?: HTMLElement;
   boundContainer?: HTMLElement;
   scrollHandler?: EventListener;
