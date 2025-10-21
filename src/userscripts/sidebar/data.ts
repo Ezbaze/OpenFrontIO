@@ -855,8 +855,12 @@ export class DataStore {
   }
 
   private extractClanFromName(name: string): string | undefined {
-    const match = name.match(/\[(.+?)\]/);
-    return match ? match[1].trim() : undefined;
+    if (!name.startsWith("[") || !name.includes("]")) {
+      return undefined;
+    }
+
+    const match = name.match(/^\[([a-zA-Z]{2,5})\]/);
+    return match ? match[1] : undefined;
   }
 
   private getTraitorTargets(playerId: string): Set<string> {
