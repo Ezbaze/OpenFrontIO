@@ -64,6 +64,9 @@ type OverlaySelector = (typeof OVERLAY_SELECTORS)[number];
 interface OverlayRegistration {
   root: HTMLElement;
   target: HTMLElement;
+  originalLeft: string;
+  originalRight: string;
+  originalMaxWidth: string;
 }
 
 let leafIdCounter = 0;
@@ -124,7 +127,10 @@ export class SidebarApp {
   private overlayObserver?: MutationObserver;
   private overlayResizeObserver?: ResizeObserver;
   private readonly handleOverlayRealign = () => this.repositionGameOverlay();
+  private readonly handleGlobalKeyDown = (event: KeyboardEvent) =>
+    this.onGlobalKeyDown(event);
   private readonly viewActions: ViewActionHandlers;
+  private isSidebarHidden = false;
 
   constructor(store: DataStore) {
     this.store = store;
@@ -149,7 +155,41 @@ export class SidebarApp {
     this.overlayResizeObserver = new ResizeObserver(this.handleOverlayRealign);
     this.overlayResizeObserver.observe(this.sidebar);
     window.addEventListener("resize", this.handleOverlayRealign);
+    window.addEventListener("keydown", this.handleGlobalKeyDown);
     this.repositionGameOverlay();
+  }
+
+  private onGlobalKeyDown(event: KeyboardEvent): void {
+    if (event.defaultPrevented || event.repeat) {
+      return;
+    }
+
+    const target = event.target;
+    if (target instanceof HTMLElement) {
+      if (target.isContentEditable) {
+        return;
+      }
+      const editableTarget = target.closest(
+        "input, textarea, select, [contenteditable='true' i], [contenteditable='']",
+      );
+      if (editableTarget) {
+        return;
+      }
+    }
+
+    const isToggleShortcut =
+      event.code === "KeyH" &&
+      event.ctrlKey &&
+      event.altKey &&
+      !event.shiftKey &&
+      !event.metaKey;
+
+    if (!isToggleShortcut) {
+      return;
+    }
+
+    event.preventDefault();
+    this.toggleSidebarVisibility();
   }
 
   private createSidebarShell(): HTMLElement {
@@ -220,7 +260,7 @@ export class SidebarApp {
       if (found) {
         const target = this.resolveOverlayTarget(selector, found);
         if (target) {
-          this.overlayElements.set(selector, { root: found, target });
+          this.registerOverlay(selector, found, target);
           discovered = true;
         }
       }
@@ -262,7 +302,7 @@ export class SidebarApp {
         if (candidate) {
           const target = this.resolveOverlayTarget(selector, candidate);
           if (target) {
-            this.overlayElements.set(selector, { root: candidate, target });
+            this.registerOverlay(selector, candidate, target);
             updated = true;
           }
         } else if (registration) {
@@ -296,7 +336,9 @@ export class SidebarApp {
 
   private repositionGameOverlay(): void {
     let missingElement = false;
-    const sidebarWidth = this.sidebar.getBoundingClientRect().width;
+    const sidebarWidth = this.isSidebarHidden
+      ? 0
+      : this.sidebar.getBoundingClientRect().width;
     const offset = Math.round(sidebarWidth) + 16;
     for (const selector of OVERLAY_SELECTORS) {
       const registration = this.ensureOverlayRegistration(selector);
@@ -306,9 +348,15 @@ export class SidebarApp {
       }
 
       const target = registration.target;
-      target.style.left = `${offset}px`;
-      target.style.right = "auto";
-      target.style.maxWidth = `calc(100vw - ${offset + 24}px)`;
+      if (this.isSidebarHidden) {
+        target.style.left = registration.originalLeft;
+        target.style.right = registration.originalRight;
+        target.style.maxWidth = registration.originalMaxWidth;
+      } else {
+        target.style.left = `${offset}px`;
+        target.style.right = "auto";
+        target.style.maxWidth = `calc(100vw - ${offset + 24}px)`;
+      }
     }
 
     if (missingElement) {
@@ -346,11 +394,60 @@ export class SidebarApp {
       registration.root !== root ||
       registration.target !== target
     ) {
-      registration = { root, target } satisfies OverlayRegistration;
-      this.overlayElements.set(selector, registration);
+      this.registerOverlay(selector, root, target);
+      registration = this.overlayElements.get(selector) ?? null;
     }
 
     return registration;
+  }
+
+  private registerOverlay(
+    selector: OverlaySelector,
+    root: HTMLElement,
+    target: HTMLElement,
+  ): void {
+    const existing = this.overlayElements.get(selector);
+    const originalLeft =
+      existing && existing.target === target
+        ? existing.originalLeft
+        : target.style.left;
+    const originalRight =
+      existing && existing.target === target
+        ? existing.originalRight
+        : target.style.right;
+    const originalMaxWidth =
+      existing && existing.target === target
+        ? existing.originalMaxWidth
+        : target.style.maxWidth;
+
+    this.overlayElements.set(selector, {
+      root,
+      target,
+      originalLeft,
+      originalRight,
+      originalMaxWidth,
+    });
+  }
+
+  private toggleSidebarVisibility(force?: boolean): void {
+    const nextHidden =
+      typeof force === "boolean" ? force : !this.isSidebarHidden;
+    if (nextHidden === this.isSidebarHidden) {
+      return;
+    }
+
+    this.isSidebarHidden = nextHidden;
+    if (nextHidden) {
+      this.sidebar.style.display = "none";
+      this.sidebar.setAttribute("aria-hidden", "true");
+      this.sidebar.dataset.sidebarHidden = "true";
+    } else {
+      this.sidebar.style.display = "";
+      this.sidebar.removeAttribute("aria-hidden");
+      delete this.sidebar.dataset.sidebarHidden;
+    }
+
+    this.repositionGameOverlay();
   }
 
   private resolveOverlayTarget(
