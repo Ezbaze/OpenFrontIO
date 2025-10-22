@@ -14,6 +14,7 @@ import {
   focusTile,
   formatCountdown,
   formatNumber,
+  formatTroopCount,
   showContextMenu,
 } from "./utils";
 
@@ -452,7 +453,7 @@ function renderPlayerPanelView(options: ViewRenderOptions): HTMLElement {
       );
       summary.appendChild(createSummaryStat("Gold", formatNumber(player.gold)));
       summary.appendChild(
-        createSummaryStat("Troops", formatNumber(player.troops)),
+        createSummaryStat("Troops", formatTroopCount(player.troops)),
       );
       header.appendChild(summary);
 
@@ -672,7 +673,7 @@ function getShipCellValue(key: SortKey, ship: ShipRecord): string {
     case "type":
       return ship.type;
     case "troops":
-      return formatNumber(ship.troops);
+      return formatTroopCount(ship.troops);
     case "origin":
       return formatTileSummary(ship.origin);
     case "current":
@@ -1180,21 +1181,23 @@ function renderPlayerDetails(
     createDetailSection(
       "Incoming attacks",
       player.incomingAttacks,
-      (attack) => `${attack.from} – ${formatNumber(attack.troops)} troops`,
+      (attack) => `${attack.from} – ${formatTroopCount(attack.troops)} troops`,
     ),
   );
   grid.appendChild(
     createDetailSection(
       "Outgoing attacks",
       player.outgoingAttacks,
-      (attack) => `${attack.target} – ${formatNumber(attack.troops)} troops`,
+      (attack) =>
+        `${attack.target} – ${formatTroopCount(attack.troops)} troops`,
     ),
   );
   grid.appendChild(
     createDetailSection(
       "Defensive supports",
       player.defensiveSupports,
-      (support) => `${support.ally} – ${formatNumber(support.troops)} troops`,
+      (support) =>
+        `${support.ally} – ${formatTroopCount(support.troops)} troops`,
     ),
   );
 
@@ -1392,7 +1395,7 @@ function getPlayerCellValue(
     case "gold":
       return formatNumber(player.gold);
     case "troops":
-      return formatNumber(player.troops);
+      return formatTroopCount(player.troops);
     case "incoming":
       return String(metrics.incoming);
     case "outgoing":
@@ -1427,7 +1430,7 @@ function getAggregateCellValue(
     case "gold":
       return formatNumber(totals.gold);
     case "troops":
-      return formatNumber(totals.troops);
+      return formatTroopCount(totals.troops);
     case "incoming":
       return String(metrics.incoming);
     case "outgoing":

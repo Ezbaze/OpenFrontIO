@@ -2,8 +2,19 @@ import type { TileSummary } from "./types";
 
 const numberFormatter = new Intl.NumberFormat("en-US");
 
+function normalizeTroopCount(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+  return Math.floor(Math.max(value, 0) / 10);
+}
+
 export function formatNumber(value: number): string {
   return numberFormatter.format(value);
+}
+
+export function formatTroopCount(rawTroops: number): string {
+  return formatNumber(normalizeTroopCount(rawTroops));
 }
 
 export function formatCountdown(targetMs: number, nowMs: number): string {

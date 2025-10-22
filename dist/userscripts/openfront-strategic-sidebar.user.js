@@ -65,8 +65,17 @@
   }
 
   const numberFormatter = new Intl.NumberFormat("en-US");
+  function normalizeTroopCount(value) {
+    if (!Number.isFinite(value)) {
+      return 0;
+    }
+    return Math.floor(Math.max(value, 0) / 10);
+  }
   function formatNumber(value) {
     return numberFormatter.format(value);
+  }
+  function formatTroopCount(rawTroops) {
+    return formatNumber(normalizeTroopCount(rawTroops));
   }
   function formatCountdown(targetMs, nowMs) {
     const diff = targetMs - nowMs;
@@ -673,7 +682,7 @@
           createSummaryStat("Gold", formatNumber(player.gold)),
         );
         summary.appendChild(
-          createSummaryStat("Troops", formatNumber(player.troops)),
+          createSummaryStat("Troops", formatTroopCount(player.troops)),
         );
         header.appendChild(summary);
         if (player.tradeStopped) {
@@ -863,7 +872,7 @@
       case "type":
         return ship.type;
       case "troops":
-        return formatNumber(ship.troops);
+        return formatTroopCount(ship.troops);
       case "origin":
         return formatTileSummary(ship.origin);
       case "current":
@@ -1273,21 +1282,24 @@
       createDetailSection(
         "Incoming attacks",
         player.incomingAttacks,
-        (attack) => `${attack.from} – ${formatNumber(attack.troops)} troops`,
+        (attack) =>
+          `${attack.from} – ${formatTroopCount(attack.troops)} troops`,
       ),
     );
     grid.appendChild(
       createDetailSection(
         "Outgoing attacks",
         player.outgoingAttacks,
-        (attack) => `${attack.target} – ${formatNumber(attack.troops)} troops`,
+        (attack) =>
+          `${attack.target} – ${formatTroopCount(attack.troops)} troops`,
       ),
     );
     grid.appendChild(
       createDetailSection(
         "Defensive supports",
         player.defensiveSupports,
-        (support) => `${support.ally} – ${formatNumber(support.troops)} troops`,
+        (support) =>
+          `${support.ally} – ${formatTroopCount(support.troops)} troops`,
       ),
     );
     const activeAlliances = getActiveAlliances(player, snapshot);
@@ -1457,7 +1469,7 @@
       case "gold":
         return formatNumber(player.gold);
       case "troops":
-        return formatNumber(player.troops);
+        return formatTroopCount(player.troops);
       case "incoming":
         return String(metrics.incoming);
       case "outgoing":
@@ -1487,7 +1499,7 @@
       case "gold":
         return formatNumber(totals.gold);
       case "troops":
-        return formatNumber(totals.troops);
+        return formatTroopCount(totals.troops);
       case "incoming":
         return String(metrics.incoming);
       case "outgoing":
