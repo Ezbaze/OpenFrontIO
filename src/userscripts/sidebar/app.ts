@@ -208,7 +208,13 @@ export class SidebarApp {
 
     const resizer = createElement(
       "div",
-      "absolute right-0 top-0 h-full w-2 translate-x-full cursor-col-resize rounded-r-full bg-transparent transition-colors hover:bg-sky-500/30",
+      "group absolute right-0 top-0 flex h-full w-3 translate-x-full cursor-col-resize items-center justify-center rounded-r-full bg-transparent transition-colors duration-150 hover:bg-sky-500/10",
+    );
+    resizer.appendChild(
+      createElement(
+        "span",
+        "h-12 w-px rounded-full bg-slate-600/60 transition-colors duration-150 group-hover:bg-sky-400/60",
+      ),
     );
     resizer.addEventListener("pointerdown", (event) =>
       this.startSidebarResize(event),
@@ -636,8 +642,16 @@ export class SidebarApp {
         const handle = createElement(
           "div",
           group.orientation === "horizontal"
-            ? "h-2 w-full cursor-row-resize bg-slate-800/70 hover:bg-slate-700/80"
-            : "w-2 h-full cursor-col-resize bg-slate-800/70 hover:bg-slate-700/80",
+            ? "group relative -my-px flex h-3 w-full cursor-row-resize items-center justify-center rounded-md bg-transparent transition-colors duration-150 hover:bg-sky-500/10"
+            : "group relative -mx-px flex w-3 h-full cursor-col-resize items-center justify-center rounded-md bg-transparent transition-colors duration-150 hover:bg-sky-500/10",
+        );
+        handle.appendChild(
+          createElement(
+            "span",
+            group.orientation === "horizontal"
+              ? "h-px w-10 rounded-full bg-slate-600/60 transition-colors duration-150 group-hover:bg-sky-400/60"
+              : "w-px h-10 rounded-full bg-slate-600/60 transition-colors duration-150 group-hover:bg-sky-400/60",
+          ),
         );
         handle.dataset.handleIndex = String(i);
         handle.addEventListener("pointerdown", (event) =>
