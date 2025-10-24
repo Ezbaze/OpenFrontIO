@@ -1,8 +1,15 @@
 import {
+  ActionRunMode,
   GameSnapshot,
   PanelLeafNode,
   PlayerRecord,
   ShipRecord,
+  SidebarActionDefinitionUpdate,
+  SidebarActionSetting,
+  SidebarActionSettingType,
+  SidebarActionSettingValue,
+  SidebarActionsState,
+  SidebarRunningActionStatus,
   SortDirection,
   SortKey,
   SortState,
@@ -14,6 +21,7 @@ import {
   focusTile,
   formatCountdown,
   formatNumber,
+  formatTimestamp,
   formatTroopCount,
   showContextMenu,
 } from "./utils";
@@ -29,12 +37,115 @@ export interface ViewLifecycleCallbacks {
 export interface ViewActionHandlers {
   toggleTrading: (playerIds: string[], stopped: boolean) => void;
   showPlayerDetails: (playerId: string) => void;
+  createAction?: () => void;
+  selectAction?: (actionId?: string) => void;
+  saveAction?: (
+    actionId: string,
+    update: SidebarActionDefinitionUpdate,
+  ) => void;
+  deleteAction?: (actionId: string) => void;
+  startAction?: (actionId: string) => void;
+  selectRunningAction?: (runningId?: string) => void;
+  stopRunningAction?: (runningId: string) => void;
+  updateRunningActionSetting?: (
+    runningId: string,
+    settingId: string,
+    value: SidebarActionSettingValue,
+  ) => void;
+  setRunningActionInterval?: (runId: string, ticks: number) => void;
 }
 
 const DEFAULT_ACTIONS: ViewActionHandlers = {
   toggleTrading: () => undefined,
   showPlayerDetails: () => undefined,
+  createAction: () => undefined,
+  selectAction: () => undefined,
+  saveAction: () => undefined,
+  deleteAction: () => undefined,
+  startAction: () => undefined,
+  selectRunningAction: () => undefined,
+  stopRunningAction: () => undefined,
+  updateRunningActionSetting: () => undefined,
+  setRunningActionInterval: () => undefined,
 };
+
+const EMPTY_ACTIONS_STATE: SidebarActionsState = {
+  revision: 0,
+  runningRevision: 0,
+  actions: [],
+  running: [],
+};
+
+interface ActionEditorSettingState {
+  id: string;
+  key: string;
+  label: string;
+  type: SidebarActionSettingType;
+  value: SidebarActionSettingValue;
+}
+
+interface ActionEditorFormState {
+  id: string;
+  name: string;
+  runMode: ActionRunMode;
+  description: string;
+  runIntervalTicks: number;
+  code: string;
+  settings: ActionEditorSettingState[];
+}
+
+type ActionEditorContainer = HTMLElement & {
+  formState?: ActionEditorFormState;
+};
+
+let editorSettingIdCounter = 0;
+
+function nextEditorSettingId(): string {
+  editorSettingIdCounter += 1;
+  return `editor-setting-${editorSettingIdCounter}`;
+}
+
+function getActionsState(snapshot: GameSnapshot): SidebarActionsState {
+  return snapshot.sidebarActions ?? EMPTY_ACTIONS_STATE;
+}
+
+function getRunModeLabel(mode: ActionRunMode): string {
+  return mode === "once" ? "Run once" : "Continuous";
+}
+
+function describeRunMode(mode: ActionRunMode): string {
+  return mode === "once"
+    ? "Runs a single time and removes itself from the running list."
+    : "Keeps running until you stop it manually.";
+}
+
+function formatRunStatus(status: SidebarRunningActionStatus): string {
+  switch (status) {
+    case "running":
+      return "Running";
+    case "completed":
+      return "Completed";
+    case "stopped":
+      return "Stopped";
+    case "failed":
+      return "Failed";
+    default:
+      return status;
+  }
+}
+
+function defaultValueForType(
+  type: SidebarActionSettingType,
+): SidebarActionSettingValue {
+  switch (type) {
+    case "number":
+      return 0;
+    case "toggle":
+      return false;
+    default:
+      return "";
+  }
+}
 
 interface AggregatedRow {
   key: string;
@@ -161,6 +272,36 @@ export function buildViewContent(
         existingContainer,
         actions: viewActions,
         lifecycle,
+      });
+    case "actions":
+      return renderActionsDirectoryView({
+        leaf,
+        snapshot,
+        existingContainer,
+        actions: viewActions,
+      });
+    case "actionEditor":
+      return renderActionEditorView({
+        leaf,
+        snapshot,
+        existingContainer,
+        lifecycle,
+        actions: viewActions,
+      });
+    case "runningActions":
+      return renderRunningActionsView({
+        leaf,
+        snapshot,
+        existingContainer,
+        actions: viewActions,
+      });
+    case "runningAction":
+      return renderRunningActionDetailView({
+        leaf,
+        snapshot,
+        existingContainer,
+        lifecycle,
+        actions: viewActions,
       });
     default:
       return createElement("div", "text-slate-200 text-sm", "Unsupported view");
@@ -474,6 +615,1130 @@ function renderPlayerPanelView(options: ViewRenderOptions): HTMLElement {
 
   container.replaceChildren(content);
   return container;
+}
+
+function renderActionsDirectoryView(options: {
+  leaf: PanelLeafNode;
+  snapshot: GameSnapshot;
+  existingContainer?: HTMLElement;
+  actions: ViewActionHandlers;
+}): HTMLElement {
+  const { leaf, snapshot, existingContainer, actions } = options;
+  const state = getActionsState(snapshot);
+  const signature = `${state.revision}:${state.selectedActionId ?? ""}:${state.running.length}`;
+  const isDirectoryContainer =
+    !!existingContainer &&
+    existingContainer.dataset.sidebarRole === "actions-directory";
+  const canReuse =
+    isDirectoryContainer && existingContainer.dataset.signature === signature;
+  const container = isDirectoryContainer
+    ? (existingContainer as HTMLElement)
+    : createElement(
+        "div",
+        "relative flex-1 overflow-hidden border border-slate-900/70 bg-slate-950/60 backdrop-blur-sm",
+      );
+  container.className =
+    "relative flex-1 overflow-hidden border border-slate-900/70 bg-slate-950/60 backdrop-blur-sm";
+  container.dataset.sidebarRole = "actions-directory";
+  container.dataset.sidebarView = leaf.view;
+  if (canReuse) {
+    return container;
+  }
+  container.dataset.signature = signature;
+
+  const header = createElement(
+    "div",
+    "flex items-center justify-between gap-2 border-b border-slate-800/70 bg-slate-900/80 px-3 py-2",
+  );
+  header.appendChild(
+    createElement(
+      "div",
+      "text-xs font-semibold uppercase tracking-wide text-slate-300",
+      "Actions",
+    ),
+  );
+  const newButton = createElement(
+    "button",
+    "rounded-md border border-slate-700 bg-slate-900/60 px-3 py-1.5 text-xs font-semibold text-slate-100 transition-colors hover:border-sky-500/70 hover:text-sky-200",
+    "New action",
+  );
+  newButton.type = "button";
+  newButton.addEventListener("click", () => {
+    actions.createAction?.();
+  });
+  header.appendChild(newButton);
+
+  const tableWrapper = createElement("div", "flex-1 overflow-auto");
+  tableWrapper.dataset.sidebarRole = "table-container";
+  const table = createElement(
+    "table",
+    "min-w-full divide-y divide-slate-800 text-xs text-slate-100",
+  );
+  const thead = createElement(
+    "thead",
+    "bg-slate-900/85 text-[0.65rem] uppercase tracking-wide text-slate-300",
+  );
+  const headerRow = createElement("tr");
+  const columns = [
+    { key: "name", label: "Action", align: "left" as const },
+    { key: "controls", label: "", align: "right" as const },
+  ];
+  for (const column of columns) {
+    const th = createElement(
+      "th",
+      `px-3 py-2 font-semibold ${
+        column.align === "right" ? "text-right" : "text-left"
+      }`,
+    );
+    th.textContent = column.label;
+    headerRow.appendChild(th);
+  }
+  thead.appendChild(headerRow);
+  table.appendChild(thead);
+
+  const tbody = createElement("tbody", "divide-y divide-slate-900/80");
+  const runningLookup = new Set(state.running.map((run) => run.actionId));
+
+  if (state.actions.length === 0) {
+    const row = createElement("tr");
+    const cell = createElement(
+      "td",
+      "px-4 py-6 text-center text-xs text-slate-400",
+      "No actions yet. Create a new action to get started.",
+    );
+    cell.colSpan = columns.length;
+    row.appendChild(cell);
+    tbody.appendChild(row);
+  } else {
+    for (const action of state.actions) {
+      const isSelected = state.selectedActionId === action.id;
+      const isRunning = runningLookup.has(action.id);
+      const row = createElement(
+        "tr",
+        `cursor-pointer transition-colors ${
+          isSelected
+            ? "bg-slate-800/50 ring-1 ring-sky-500/40"
+            : "hover:bg-slate-800/30"
+        }`,
+      );
+      row.dataset.actionId = action.id;
+      row.addEventListener("click", () => {
+        actions.selectAction?.(action.id);
+      });
+
+      const nameCell = createElement("td", "px-3 py-3 align-top");
+      const nameLine = createElement(
+        "div",
+        "flex flex-wrap items-center gap-2 text-sm font-semibold text-slate-100",
+        action.name,
+      );
+      if (isRunning) {
+        nameLine.appendChild(
+          createElement(
+            "span",
+            "rounded-full bg-emerald-500/20 px-2 py-0.5 text-[0.6rem] font-semibold uppercase tracking-wide text-emerald-200",
+            "Running",
+          ),
+        );
+      }
+      nameCell.appendChild(nameLine);
+      row.appendChild(nameCell);
+
+      const controlsCell = createElement(
+        "td",
+        "px-3 py-3 align-top text-right",
+      );
+      const controls = createElement("div", "flex justify-end gap-2");
+      const runButton = createElement(
+        "button",
+        "rounded-md border border-sky-500/50 bg-sky-500/10 px-3 py-1 text-xs font-semibold text-sky-100 transition-colors hover:bg-sky-500/20",
+        "Run",
+      );
+      runButton.type = "button";
+      runButton.addEventListener("click", (event) => {
+        event.stopPropagation();
+        actions.startAction?.(action.id);
+      });
+      controls.appendChild(runButton);
+
+      const editButton = createElement(
+        "button",
+        "rounded-md border border-slate-700 bg-slate-800/70 px-3 py-1 text-xs font-medium text-slate-200 transition-colors hover:border-sky-500/60 hover:text-sky-200",
+        "Edit",
+      );
+      editButton.type = "button";
+      editButton.addEventListener("click", (event) => {
+        event.stopPropagation();
+        actions.selectAction?.(action.id);
+      });
+      controls.appendChild(editButton);
+      controlsCell.appendChild(controls);
+      row.appendChild(controlsCell);
+
+      tbody.appendChild(row);
+    }
+  }
+
+  table.appendChild(tbody);
+  tableWrapper.appendChild(table);
+  container.replaceChildren(header, tableWrapper);
+  return container;
+}
+
+function renderActionEditorView(options: {
+  leaf: PanelLeafNode;
+  snapshot: GameSnapshot;
+  existingContainer?: HTMLElement;
+  lifecycle?: ViewLifecycleCallbacks;
+  actions: ViewActionHandlers;
+}): HTMLElement {
+  const { leaf, snapshot, existingContainer, actions } = options;
+  const state = getActionsState(snapshot);
+  const selectedAction = state.actions.find(
+    (action) => action.id === state.selectedActionId,
+  );
+  const signature = selectedAction
+    ? `${state.revision}:${selectedAction.id}:${selectedAction.updatedAtMs}`
+    : `${state.revision}:none`;
+  const prior = existingContainer as ActionEditorContainer | undefined;
+  const isEditorContainer =
+    !!prior && prior.dataset.sidebarRole === "action-editor";
+  const container = isEditorContainer
+    ? prior
+    : (createElement(
+        "div",
+        "relative flex-1 overflow-auto border border-slate-900/70 bg-slate-950/60 backdrop-blur-sm",
+      ) as ActionEditorContainer);
+  container.className =
+    "relative flex-1 overflow-auto border border-slate-900/70 bg-slate-950/60 backdrop-blur-sm";
+  container.dataset.sidebarRole = "action-editor";
+  container.dataset.sidebarView = leaf.view;
+  if (container.dataset.signature === signature) {
+    return container;
+  }
+  container.dataset.signature = signature;
+  container.formState = undefined;
+
+  if (!selectedAction) {
+    container.replaceChildren(
+      createElement(
+        "div",
+        "flex h-full items-center justify-center p-6 text-center text-sm text-slate-400",
+        state.actions.length === 0
+          ? "Create an action to begin editing its script."
+          : "Select an action from the Actions view to edit its script and settings.",
+      ),
+    );
+    return container;
+  }
+
+  const formState: ActionEditorFormState = {
+    id: selectedAction.id,
+    name: selectedAction.name,
+    runMode: selectedAction.runMode,
+    description: selectedAction.description ?? "",
+    runIntervalTicks: selectedAction.runIntervalTicks ?? 1,
+    code: selectedAction.code,
+    settings: selectedAction.settings.map((setting) => ({
+      id: setting.id ?? nextEditorSettingId(),
+      key: setting.key,
+      label: setting.label,
+      type: setting.type,
+      value: setting.value ?? defaultValueForType(setting.type),
+    })),
+  };
+  container.formState = formState;
+
+  const layout = createElement(
+    "div",
+    "flex min-h-full flex-col gap-6 p-4 text-sm text-slate-100",
+  );
+
+  const header = createElement(
+    "div",
+    "flex flex-wrap items-start justify-between gap-3 border-b border-slate-800/70 pb-3",
+  );
+  const initialTitle = formState.name.trim();
+  const titlePreview = createElement(
+    "div",
+    "text-lg font-semibold text-slate-100",
+    initialTitle === "" ? "Untitled action" : formState.name,
+  );
+  const descriptionPreview = createElement(
+    "div",
+    "text-sm text-slate-400",
+    formState.description.trim() === ""
+      ? "Add a description..."
+      : formState.description,
+  );
+  if (formState.description.trim() === "") {
+    descriptionPreview.classList.add("italic", "text-slate-500");
+  }
+  const headerText = createElement("div", "flex flex-col gap-1");
+  headerText.appendChild(titlePreview);
+  headerText.appendChild(descriptionPreview);
+  header.appendChild(headerText);
+
+  const headerMeta = createElement(
+    "div",
+    "flex flex-col items-end gap-1 text-right text-[0.7rem] text-slate-400",
+  );
+  const headerMode = createElement(
+    "div",
+    "",
+    describeRunMode(formState.runMode),
+  );
+  headerMeta.appendChild(headerMode);
+  headerMeta.appendChild(
+    createElement(
+      "div",
+      "text-[0.65rem] uppercase tracking-wide text-slate-500",
+      `Last updated ${formatTimestamp(selectedAction.updatedAtMs)}`,
+    ),
+  );
+  header.appendChild(headerMeta);
+  layout.appendChild(header);
+
+  const nameField = createElement("label", "flex flex-col gap-1");
+  nameField.appendChild(
+    createElement(
+      "span",
+      "text-xs uppercase tracking-wide text-slate-400",
+      "Name",
+    ),
+  );
+  const nameInput = document.createElement("input");
+  nameInput.type = "text";
+  nameInput.className =
+    "rounded-md border border-slate-700 bg-slate-900/80 px-3 py-1.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-500/70";
+  nameInput.value = formState.name;
+  nameInput.addEventListener("input", () => {
+    formState.name = nameInput.value;
+    const trimmed = nameInput.value.trim();
+    titlePreview.textContent =
+      trimmed === "" ? "Untitled action" : nameInput.value;
+  });
+  nameField.appendChild(nameInput);
+  layout.appendChild(nameField);
+
+  const descriptionField = createElement("label", "flex flex-col gap-1");
+  descriptionField.appendChild(
+    createElement(
+      "span",
+      "text-xs uppercase tracking-wide text-slate-400",
+      "Description",
+    ),
+  );
+  const descriptionInput = document.createElement("textarea");
+  descriptionInput.className =
+    "min-h-[72px] w-full rounded-md border border-slate-700 bg-slate-900/80 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-500/70";
+  descriptionInput.value = formState.description;
+  descriptionInput.addEventListener("input", () => {
+    formState.description = descriptionInput.value;
+    const trimmed = descriptionInput.value.trim();
+    if (trimmed === "") {
+      descriptionPreview.textContent = "Add a description...";
+      descriptionPreview.classList.add("italic", "text-slate-500");
+    } else {
+      descriptionPreview.textContent = descriptionInput.value;
+      descriptionPreview.classList.remove("italic", "text-slate-500");
+    }
+  });
+  descriptionField.appendChild(descriptionInput);
+  layout.appendChild(descriptionField);
+
+  const runConfigRow = createElement("div", "flex flex-wrap gap-4");
+
+  const modeField = createElement("label", "flex flex-col gap-1");
+  modeField.appendChild(
+    createElement(
+      "span",
+      "text-xs uppercase tracking-wide text-slate-400",
+      "Run mode",
+    ),
+  );
+  const modeSelect = document.createElement("select");
+  modeSelect.className =
+    "w-48 rounded-md border border-slate-700 bg-slate-900/80 px-3 py-1.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-500/70";
+  for (const option of [
+    { value: "continuous", label: "Continuous" },
+    { value: "once", label: "Run once" },
+  ]) {
+    const opt = document.createElement("option");
+    opt.value = option.value;
+    opt.textContent = option.label;
+    modeSelect.appendChild(opt);
+  }
+  modeSelect.value = formState.runMode;
+  modeField.appendChild(modeSelect);
+  runConfigRow.appendChild(modeField);
+
+  const intervalField = createElement("label", "flex flex-col gap-1");
+  intervalField.appendChild(
+    createElement(
+      "span",
+      "text-xs uppercase tracking-wide text-slate-400",
+      "Run every (ticks)",
+    ),
+  );
+  const intervalInput = document.createElement("input");
+  intervalInput.type = "number";
+  intervalInput.min = "1";
+  intervalInput.className =
+    "w-40 rounded-md border border-slate-700 bg-slate-900/80 px-3 py-1.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-500/70";
+  intervalInput.value = String(formState.runIntervalTicks);
+  intervalInput.addEventListener("change", () => {
+    const numeric = Number(intervalInput.value);
+    const normalized =
+      Number.isFinite(numeric) && numeric > 0 ? Math.floor(numeric) : 1;
+    intervalInput.value = String(normalized);
+    formState.runIntervalTicks = normalized;
+  });
+  intervalField.appendChild(intervalInput);
+  if (formState.runMode !== "continuous") {
+    intervalField.classList.add("hidden");
+  }
+  runConfigRow.appendChild(intervalField);
+
+  modeSelect.addEventListener("change", () => {
+    formState.runMode = modeSelect.value as ActionRunMode;
+    headerMode.textContent = describeRunMode(formState.runMode);
+    intervalField.classList.toggle(
+      "hidden",
+      formState.runMode !== "continuous",
+    );
+  });
+
+  layout.appendChild(runConfigRow);
+
+  const codeField = createElement("div", "flex flex-col gap-2");
+  codeField.appendChild(
+    createElement(
+      "span",
+      "text-xs uppercase tracking-wide text-slate-400",
+      "Script",
+    ),
+  );
+  const codeArea = document.createElement("textarea");
+  codeArea.className =
+    "min-h-[220px] w-full rounded-md border border-slate-700 bg-slate-950/80 px-3 py-2 font-mono text-xs text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-500/70";
+  codeArea.value = formState.code;
+  codeArea.spellcheck = false;
+  codeArea.addEventListener("input", () => {
+    formState.code = codeArea.value;
+  });
+  codeField.appendChild(codeArea);
+  layout.appendChild(codeField);
+
+  const settingsSection = createElement("div", "flex flex-col gap-3");
+  const settingsHeader = createElement(
+    "div",
+    "flex items-center justify-between gap-2",
+  );
+  settingsHeader.appendChild(
+    createElement(
+      "span",
+      "text-xs uppercase tracking-wide text-slate-400",
+      "Settings",
+    ),
+  );
+  const settingsList = createElement("div", "flex flex-col gap-3");
+  const removeSetting = (settingId: string) => {
+    const index = formState.settings.findIndex(
+      (entry) => entry.id === settingId,
+    );
+    if (index !== -1) {
+      formState.settings.splice(index, 1);
+    }
+  };
+  for (const setting of formState.settings) {
+    settingsList.appendChild(
+      createActionSettingEditorCard(formState, setting, removeSetting),
+    );
+  }
+  const addSettingButton = createElement(
+    "button",
+    "rounded-md border border-slate-700 bg-slate-900/70 px-3 py-1 text-xs font-medium text-slate-200 transition-colors hover:border-sky-500/60 hover:text-sky-200",
+    "Add setting",
+  );
+  addSettingButton.type = "button";
+  addSettingButton.addEventListener("click", () => {
+    const newSetting: ActionEditorSettingState = {
+      id: nextEditorSettingId(),
+      key: "",
+      label: "",
+      type: "text",
+      value: "",
+    };
+    formState.settings.push(newSetting);
+    settingsList.appendChild(
+      createActionSettingEditorCard(formState, newSetting, removeSetting),
+    );
+  });
+  settingsHeader.appendChild(addSettingButton);
+  settingsSection.appendChild(settingsHeader);
+  if (formState.settings.length === 0) {
+    settingsSection.appendChild(
+      createElement(
+        "p",
+        "text-[0.75rem] text-slate-400",
+        "Add settings to expose configurable values that can be adjusted while the action runs.",
+      ),
+    );
+  }
+  settingsSection.appendChild(settingsList);
+  layout.appendChild(settingsSection);
+
+  const footer = createElement(
+    "div",
+    "flex flex-wrap items-center justify-between gap-3 border-t border-slate-800/70 pt-4",
+  );
+  const leftControls = createElement("div", "flex items-center gap-2");
+  const runButton = createElement(
+    "button",
+    "rounded-md border border-sky-500/60 bg-sky-500/10 px-3 py-1.5 text-xs font-semibold text-sky-100 transition-colors hover:bg-sky-500/20",
+    "Run action",
+  );
+  runButton.type = "button";
+  runButton.addEventListener("click", () => {
+    actions.startAction?.(selectedAction.id);
+  });
+  leftControls.appendChild(runButton);
+  footer.appendChild(leftControls);
+
+  const rightControls = createElement("div", "flex items-center gap-2");
+  const deleteButton = createElement(
+    "button",
+    "rounded-md border border-rose-500/50 bg-rose-500/10 px-3 py-1.5 text-xs font-semibold text-rose-200 transition-colors hover:bg-rose-500/20",
+    "Delete",
+  );
+  deleteButton.type = "button";
+  deleteButton.addEventListener("click", () => {
+    actions.deleteAction?.(selectedAction.id);
+  });
+  const saveButton = createElement(
+    "button",
+    "rounded-md border border-sky-500/60 bg-sky-500/20 px-4 py-1.5 text-xs font-semibold text-sky-100 transition-colors hover:bg-sky-500/30",
+    "Save changes",
+  );
+  saveButton.type = "button";
+  saveButton.addEventListener("click", () => {
+    const update: SidebarActionDefinitionUpdate = {
+      name: formState.name,
+      code: formState.code,
+      runMode: formState.runMode,
+      description: formState.description,
+      runIntervalTicks: formState.runIntervalTicks,
+      settings: formState.settings.map((setting) => ({
+        id: setting.id,
+        key: setting.key,
+        label: setting.label,
+        type: setting.type,
+        value:
+          setting.type === "number"
+            ? Number(setting.value)
+            : setting.type === "toggle"
+              ? Boolean(setting.value)
+              : String(setting.value ?? ""),
+      })),
+    };
+    actions.saveAction?.(selectedAction.id, update);
+  });
+  rightControls.appendChild(deleteButton);
+  rightControls.appendChild(saveButton);
+  footer.appendChild(rightControls);
+  layout.appendChild(footer);
+
+  container.replaceChildren(layout);
+  return container;
+}
+
+function renderRunningActionsView(options: {
+  leaf: PanelLeafNode;
+  snapshot: GameSnapshot;
+  existingContainer?: HTMLElement;
+  actions: ViewActionHandlers;
+}): HTMLElement {
+  const { leaf, snapshot, existingContainer, actions } = options;
+  const state = getActionsState(snapshot);
+  const signature = `${state.runningRevision}:${state.selectedRunningActionId ?? ""}:${state.running.length}`;
+  const isContainer =
+    !!existingContainer &&
+    existingContainer.dataset.sidebarRole === "running-actions";
+  const canReuse =
+    isContainer && existingContainer.dataset.signature === signature;
+  const container = isContainer
+    ? existingContainer
+    : createElement(
+        "div",
+        "relative flex-1 overflow-hidden border border-slate-900/70 bg-slate-950/60 backdrop-blur-sm",
+      );
+  container.className =
+    "relative flex-1 overflow-hidden border border-slate-900/70 bg-slate-950/60 backdrop-blur-sm";
+  container.dataset.sidebarRole = "running-actions";
+  container.dataset.sidebarView = leaf.view;
+  if (canReuse) {
+    return container;
+  }
+  container.dataset.signature = signature;
+
+  const header = createElement(
+    "div",
+    "flex items-center justify-between gap-2 border-b border-slate-800/70 bg-slate-900/80 px-3 py-2",
+  );
+  header.appendChild(
+    createElement(
+      "div",
+      "text-xs font-semibold uppercase tracking-wide text-slate-300",
+      "Running actions",
+    ),
+  );
+  header.appendChild(
+    createElement(
+      "div",
+      "text-[0.7rem] text-slate-400",
+      `${state.running.length} active`,
+    ),
+  );
+
+  const tableWrapper = createElement("div", "flex-1 overflow-auto");
+  tableWrapper.dataset.sidebarRole = "table-container";
+  if (state.running.length === 0) {
+    tableWrapper.replaceChildren(
+      createElement(
+        "div",
+        "flex h-full items-center justify-center px-4 py-8 text-center text-sm text-slate-400",
+        "No actions are currently running.",
+      ),
+    );
+    container.replaceChildren(header, tableWrapper);
+    return container;
+  }
+
+  const table = createElement(
+    "table",
+    "min-w-full divide-y divide-slate-800 text-xs text-slate-100",
+  );
+  const thead = createElement(
+    "thead",
+    "bg-slate-900/85 text-[0.65rem] uppercase tracking-wide text-slate-300",
+  );
+  const headerRow = createElement("tr");
+  const columns = [
+    { key: "name", label: "Action", align: "left" as const },
+    { key: "mode", label: "Mode", align: "left" as const },
+    { key: "started", label: "Started", align: "left" as const },
+    { key: "controls", label: "", align: "right" as const },
+  ];
+  for (const column of columns) {
+    const th = createElement(
+      "th",
+      `px-3 py-2 font-semibold ${
+        column.align === "right" ? "text-right" : "text-left"
+      }`,
+    );
+    th.textContent = column.label;
+    headerRow.appendChild(th);
+  }
+  thead.appendChild(headerRow);
+  table.appendChild(thead);
+
+  const tbody = createElement("tbody", "divide-y divide-slate-900/80");
+  for (const run of state.running) {
+    const isSelected = state.selectedRunningActionId === run.id;
+    const row = createElement(
+      "tr",
+      `cursor-pointer transition-colors ${
+        isSelected
+          ? "bg-slate-800/50 ring-1 ring-sky-500/40"
+          : "hover:bg-slate-800/30"
+      }`,
+    );
+    row.dataset.runningActionId = run.id;
+    row.addEventListener("click", () => {
+      actions.selectRunningAction?.(run.id);
+    });
+
+    const nameCell = createElement("td", "px-3 py-3 align-top");
+    const nameLine = createElement(
+      "div",
+      "flex flex-wrap items-center gap-2 text-sm font-semibold text-slate-100",
+      run.name,
+    );
+    nameLine.appendChild(createRunStatusBadge(run.status));
+    nameCell.appendChild(nameLine);
+    row.appendChild(nameCell);
+    row.appendChild(
+      createElement(
+        "td",
+        "px-3 py-3 align-top text-[0.75rem] uppercase tracking-wide text-slate-400",
+        getRunModeLabel(run.runMode),
+      ),
+    );
+    row.appendChild(
+      createElement(
+        "td",
+        "px-3 py-3 align-top text-[0.75rem] text-slate-300",
+        formatTimestamp(run.startedAtMs),
+      ),
+    );
+
+    const controlsCell = createElement("td", "px-3 py-3 align-top");
+    const stopButton = createElement(
+      "button",
+      "rounded-md border border-rose-500/40 bg-rose-500/10 px-3 py-1 text-xs font-semibold text-rose-200 transition-colors hover:bg-rose-500/20",
+      "Stop",
+    );
+    stopButton.type = "button";
+    stopButton.addEventListener("click", (event) => {
+      event.stopPropagation();
+      actions.stopRunningAction?.(run.id);
+    });
+    if (run.status !== "running") {
+      stopButton.disabled = true;
+      stopButton.classList.add("cursor-not-allowed", "opacity-50");
+    }
+    controlsCell.appendChild(stopButton);
+    row.appendChild(controlsCell);
+
+    tbody.appendChild(row);
+  }
+  table.appendChild(tbody);
+  tableWrapper.replaceChildren(table);
+
+  container.replaceChildren(header, tableWrapper);
+  return container;
+}
+
+function renderRunningActionDetailView(options: {
+  leaf: PanelLeafNode;
+  snapshot: GameSnapshot;
+  existingContainer?: HTMLElement;
+  lifecycle?: ViewLifecycleCallbacks;
+  actions: ViewActionHandlers;
+}): HTMLElement {
+  const { leaf, snapshot, existingContainer, actions } = options;
+  const state = getActionsState(snapshot);
+  const selectedRun = state.running.find(
+    (run) => run.id === state.selectedRunningActionId,
+  );
+  const signature = selectedRun
+    ? `${state.runningRevision}:${selectedRun.id}:${selectedRun.lastUpdatedMs}`
+    : `${state.runningRevision}:none`;
+  const isContainer =
+    !!existingContainer &&
+    existingContainer.dataset.sidebarRole === "running-action";
+  const container = isContainer
+    ? existingContainer
+    : createElement(
+        "div",
+        "relative flex-1 overflow-auto border border-slate-900/70 bg-slate-950/60 backdrop-blur-sm",
+      );
+  container.className =
+    "relative flex-1 overflow-auto border border-slate-900/70 bg-slate-950/60 backdrop-blur-sm";
+  container.dataset.sidebarRole = "running-action";
+  container.dataset.sidebarView = leaf.view;
+  if (container.dataset.signature === signature) {
+    return container;
+  }
+  container.dataset.signature = signature;
+
+  if (!selectedRun) {
+    container.replaceChildren(
+      createElement(
+        "div",
+        "flex h-full items-center justify-center p-6 text-center text-sm text-slate-400",
+        state.running.length === 0
+          ? "No actions are currently running."
+          : "Select a running action to adjust its settings.",
+      ),
+    );
+    return container;
+  }
+
+  const layout = createElement(
+    "div",
+    "flex min-h-full flex-col gap-6 p-4 text-sm text-slate-100",
+  );
+
+  const header = createElement(
+    "div",
+    "flex flex-wrap items-start justify-between gap-3 border-b border-slate-800/70 pb-3",
+  );
+  const headerText = createElement("div", "flex flex-col gap-1");
+  const titleLine = createElement(
+    "div",
+    "flex flex-wrap items-center gap-2 text-lg font-semibold text-slate-100",
+  );
+  titleLine.appendChild(createElement("span", "", selectedRun.name));
+  titleLine.appendChild(createRunStatusBadge(selectedRun.status));
+  headerText.appendChild(titleLine);
+  const trimmedDescription = selectedRun.description?.trim() ?? "";
+  if (trimmedDescription !== "") {
+    headerText.appendChild(
+      createElement("div", "text-sm text-slate-400", trimmedDescription),
+    );
+  }
+  headerText.appendChild(
+    createElement(
+      "div",
+      "text-[0.7rem] text-slate-400",
+      describeRunMode(selectedRun.runMode),
+    ),
+  );
+  header.appendChild(headerText);
+  const stopButton = createElement(
+    "button",
+    "rounded-md border border-rose-500/50 bg-rose-500/10 px-3 py-1.5 text-xs font-semibold text-rose-200 transition-colors hover:bg-rose-500/20",
+    "Stop action",
+  );
+  stopButton.type = "button";
+  stopButton.addEventListener("click", () => {
+    actions.stopRunningAction?.(selectedRun.id);
+  });
+  if (selectedRun.status !== "running") {
+    stopButton.disabled = true;
+    stopButton.classList.add("cursor-not-allowed", "opacity-50");
+  }
+  header.appendChild(stopButton);
+  layout.appendChild(header);
+
+  const meta = createElement("div", "grid gap-3 text-[0.75rem] sm:grid-cols-3");
+  meta.appendChild(
+    createSummaryStat("Status", formatRunStatus(selectedRun.status)),
+  );
+  meta.appendChild(
+    createSummaryStat("Started", formatTimestamp(selectedRun.startedAtMs)),
+  );
+  meta.appendChild(
+    createSummaryStat(
+      "Last update",
+      formatTimestamp(selectedRun.lastUpdatedMs),
+    ),
+  );
+  layout.appendChild(meta);
+
+  if (selectedRun.runMode === "continuous") {
+    const intervalField = createElement(
+      "label",
+      "flex w-full max-w-xs flex-col gap-1",
+    );
+    intervalField.appendChild(
+      createElement(
+        "span",
+        "text-xs uppercase tracking-wide text-slate-400",
+        "Run every (ticks)",
+      ),
+    );
+    const intervalInput = document.createElement("input");
+    intervalInput.type = "number";
+    intervalInput.min = "1";
+    intervalInput.className =
+      "w-full rounded-md border border-slate-700 bg-slate-900/80 px-3 py-1.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-500/70";
+    intervalInput.value = String(selectedRun.runIntervalTicks ?? 1);
+    intervalInput.addEventListener("change", () => {
+      const numeric = Number(intervalInput.value);
+      const normalized =
+        Number.isFinite(numeric) && numeric > 0 ? Math.floor(numeric) : 1;
+      intervalInput.value = String(normalized);
+      if (normalized === selectedRun.runIntervalTicks) {
+        return;
+      }
+      actions.setRunningActionInterval?.(selectedRun.id, normalized);
+    });
+    intervalField.appendChild(intervalInput);
+    layout.appendChild(intervalField);
+  }
+
+  const settingsSection = createElement("div", "flex flex-col gap-3");
+  settingsSection.appendChild(
+    createElement(
+      "span",
+      "text-xs uppercase tracking-wide text-slate-400",
+      "Runtime settings",
+    ),
+  );
+  const settingsList = createElement("div", "flex flex-col gap-3");
+  if (selectedRun.settings.length === 0) {
+    settingsList.appendChild(
+      createElement(
+        "p",
+        "text-[0.75rem] text-slate-400",
+        "This action does not expose any runtime settings.",
+      ),
+    );
+  } else {
+    for (const setting of selectedRun.settings) {
+      settingsList.appendChild(
+        createRunningSettingField(selectedRun.id, setting, actions),
+      );
+    }
+  }
+  settingsSection.appendChild(settingsList);
+  layout.appendChild(settingsSection);
+
+  container.replaceChildren(layout);
+  return container;
+}
+
+function createActionSettingEditorCard(
+  formState: ActionEditorFormState,
+  setting: ActionEditorSettingState,
+  onRemove: (settingId: string) => void,
+): HTMLElement {
+  const card = createElement(
+    "div",
+    "rounded-md border border-slate-800/70 bg-slate-900/70 p-3",
+  );
+  const header = createElement("div", "flex flex-wrap items-center gap-3");
+
+  const labelField = createElement(
+    "label",
+    "flex min-w-[160px] flex-1 flex-col gap-1",
+  );
+  labelField.appendChild(
+    createElement(
+      "span",
+      "text-[0.65rem] uppercase tracking-wide text-slate-400",
+      "Label",
+    ),
+  );
+  const labelInput = document.createElement("input");
+  labelInput.type = "text";
+  labelInput.className =
+    "rounded-md border border-slate-700 bg-slate-950/70 px-3 py-1 text-xs text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-500/70";
+  labelInput.value = setting.label;
+  labelInput.addEventListener("input", () => {
+    setting.label = labelInput.value;
+  });
+  labelField.appendChild(labelInput);
+  header.appendChild(labelField);
+
+  const keyField = createElement("label", "flex w-36 flex-col gap-1");
+  keyField.appendChild(
+    createElement(
+      "span",
+      "text-[0.65rem] uppercase tracking-wide text-slate-400",
+      "Key",
+    ),
+  );
+  const keyInput = document.createElement("input");
+  keyInput.type = "text";
+  keyInput.className =
+    "rounded-md border border-slate-700 bg-slate-950/70 px-3 py-1 text-xs text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-500/70";
+  keyInput.value = setting.key;
+  keyInput.addEventListener("input", () => {
+    setting.key = keyInput.value;
+  });
+  keyField.appendChild(keyInput);
+  header.appendChild(keyField);
+
+  const typeField = createElement("label", "flex w-32 flex-col gap-1");
+  typeField.appendChild(
+    createElement(
+      "span",
+      "text-[0.65rem] uppercase tracking-wide text-slate-400",
+      "Type",
+    ),
+  );
+  const typeSelect = document.createElement("select");
+  typeSelect.className =
+    "rounded-md border border-slate-700 bg-slate-950/70 px-2 py-1 text-xs text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-500/70";
+  for (const option of [
+    { value: "text", label: "Text" },
+    { value: "number", label: "Number" },
+    { value: "toggle", label: "Toggle" },
+  ]) {
+    const opt = document.createElement("option");
+    opt.value = option.value;
+    opt.textContent = option.label;
+    typeSelect.appendChild(opt);
+  }
+  typeSelect.value = setting.type;
+  typeField.appendChild(typeSelect);
+  header.appendChild(typeField);
+
+  const removeButton = createElement(
+    "button",
+    "rounded-md border border-slate-700 bg-transparent px-2 py-1 text-xs text-slate-300 transition-colors hover:border-rose-500/60 hover:text-rose-300",
+    "Remove",
+  );
+  removeButton.type = "button";
+  removeButton.addEventListener("click", (event) => {
+    event.preventDefault();
+    onRemove(setting.id);
+    card.remove();
+  });
+  header.appendChild(removeButton);
+  card.appendChild(header);
+
+  const valueWrapper = createElement("div", "mt-3 flex flex-col gap-1");
+  valueWrapper.appendChild(
+    createElement(
+      "span",
+      "text-[0.65rem] uppercase tracking-wide text-slate-400",
+      "Value",
+    ),
+  );
+  const valueContainer = createElement("div", "flex items-center gap-2");
+  const updateValue = (value: SidebarActionSettingValue) => {
+    setting.value = value;
+  };
+  let control = createSettingValueInput(setting, updateValue);
+  valueContainer.appendChild(control);
+  valueWrapper.appendChild(valueContainer);
+  card.appendChild(valueWrapper);
+
+  typeSelect.addEventListener("change", () => {
+    const nextType = typeSelect.value as SidebarActionSettingType;
+    setting.type = nextType;
+    setting.value = defaultValueForType(nextType);
+    control = createSettingValueInput(setting, updateValue);
+    valueContainer.replaceChildren(control);
+  });
+
+  return card;
+}
+
+function createSettingValueInput(
+  setting: ActionEditorSettingState,
+  onChange: (value: SidebarActionSettingValue) => void,
+): HTMLElement {
+  switch (setting.type) {
+    case "number": {
+      const input = document.createElement("input");
+      input.type = "number";
+      input.className =
+        "w-40 rounded-md border border-slate-700 bg-slate-950/70 px-3 py-1 text-xs text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-500/70";
+      input.value = setting.value !== undefined ? String(setting.value) : "0";
+      input.addEventListener("change", () => {
+        const numeric = Number(input.value);
+        onChange(Number.isFinite(numeric) ? numeric : 0);
+      });
+      return input;
+    }
+    case "toggle": {
+      const wrapper = createElement(
+        "label",
+        "flex items-center gap-2 text-xs text-slate-200",
+      );
+      const toggle = document.createElement("input");
+      toggle.type = "checkbox";
+      toggle.className =
+        "h-4 w-4 rounded border border-slate-600 bg-slate-900 text-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-500";
+      toggle.checked = Boolean(setting.value);
+      toggle.addEventListener("change", () => {
+        onChange(toggle.checked);
+      });
+      wrapper.appendChild(toggle);
+      wrapper.appendChild(createElement("span", "", "Enabled"));
+      return wrapper;
+    }
+    default: {
+      const input = document.createElement("input");
+      input.type = "text";
+      input.className =
+        "w-full rounded-md border border-slate-700 bg-slate-950/70 px-3 py-1 text-xs text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-500/70";
+      input.value = setting.value !== undefined ? String(setting.value) : "";
+      input.addEventListener("input", () => {
+        onChange(input.value);
+      });
+      return input;
+    }
+  }
+}
+
+function createRunningSettingField(
+  runId: string,
+  setting: SidebarActionSetting,
+  actions: ViewActionHandlers,
+): HTMLElement {
+  const field = createElement(
+    "div",
+    "rounded-md border border-slate-800/70 bg-slate-900/70 p-3",
+  );
+  const header = createElement(
+    "div",
+    "flex items-center justify-between gap-2",
+  );
+  const rawLabel = setting.label?.trim() ?? "";
+  const rawKey = setting.key?.trim() ?? "";
+  const displayLabel =
+    rawLabel !== "" ? rawLabel : rawKey !== "" ? rawKey : "Setting";
+  header.appendChild(
+    createElement("div", "text-sm font-medium text-slate-100", displayLabel),
+  );
+  header.appendChild(
+    createElement(
+      "span",
+      "text-[0.65rem] uppercase tracking-wide text-slate-400",
+      setting.type,
+    ),
+  );
+  field.appendChild(header);
+  if (setting.key) {
+    field.appendChild(
+      createElement(
+        "div",
+        "text-[0.65rem] text-slate-500",
+        `Key: ${setting.key}`,
+      ),
+    );
+  }
+
+  const controlContainer = createElement("div", "mt-3");
+  switch (setting.type) {
+    case "number": {
+      const input = document.createElement("input");
+      input.type = "number";
+      input.className =
+        "w-40 rounded-md border border-slate-700 bg-slate-950/70 px-3 py-1 text-xs text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-500/70";
+      input.value = setting.value !== undefined ? String(setting.value) : "0";
+      input.addEventListener("change", () => {
+        const numeric = Number(input.value);
+        actions.updateRunningActionSetting?.(
+          runId,
+          setting.id,
+          Number.isFinite(numeric) ? numeric : 0,
+        );
+      });
+      controlContainer.appendChild(input);
+      break;
+    }
+    case "toggle": {
+      const wrapper = createElement(
+        "label",
+        "flex items-center gap-2 text-xs text-slate-200",
+      );
+      const toggle = document.createElement("input");
+      toggle.type = "checkbox";
+      toggle.className =
+        "h-4 w-4 rounded border border-slate-600 bg-slate-900 text-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-500";
+      toggle.checked = Boolean(setting.value);
+      toggle.addEventListener("change", () => {
+        actions.updateRunningActionSetting?.(runId, setting.id, toggle.checked);
+      });
+      wrapper.appendChild(toggle);
+      wrapper.appendChild(createElement("span", "", "Enabled"));
+      controlContainer.appendChild(wrapper);
+      break;
+    }
+    default: {
+      const input = document.createElement("input");
+      input.type = "text";
+      input.className =
+        "w-full rounded-md border border-slate-700 bg-slate-950/70 px-3 py-1 text-xs text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-500/70";
+      input.value = setting.value !== undefined ? String(setting.value) : "";
+      input.addEventListener("change", () => {
+        actions.updateRunningActionSetting?.(runId, setting.id, input.value);
+      });
+      controlContainer.appendChild(input);
+      break;
+    }
+  }
+
+  field.appendChild(controlContainer);
+  return field;
 }
 
 function createTableShell(options: {
@@ -1279,6 +2544,19 @@ function createBadge(
     createElement("span", "font-mono text-[0.7rem]", String(value)),
   );
   return badge;
+}
+
+function createRunStatusBadge(status: SidebarRunningActionStatus): HTMLElement {
+  const baseClass =
+    "rounded-full px-2 py-0.5 text-[0.6rem] font-semibold uppercase tracking-wide";
+  const styles: Record<SidebarRunningActionStatus, string> = {
+    running: "bg-emerald-500/20 text-emerald-200",
+    completed: "bg-sky-500/20 text-sky-200",
+    stopped: "bg-amber-500/20 text-amber-200",
+    failed: "bg-rose-500/20 text-rose-200",
+  };
+  const className = `${baseClass} ${styles[status] ?? "bg-slate-700/60 text-slate-200"}`;
+  return createElement("span", className, formatRunStatus(status));
 }
 
 function createSummaryStat(label: string, value: string): HTMLElement {

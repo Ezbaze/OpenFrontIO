@@ -23,6 +23,10 @@ const VIEW_OPTIONS: { value: ViewType; label: string }[] = [
   { value: "teams", label: "Teams" },
   { value: "ships", label: "Ships" },
   { value: "player", label: "Player panel" },
+  { value: "actions", label: "Actions" },
+  { value: "actionEditor", label: "Action Editor" },
+  { value: "runningActions", label: "Running Actions" },
+  { value: "runningAction", label: "Running Action" },
 ];
 
 const SIDEBAR_STYLE_ID = "openfront-strategic-sidebar-styles";
@@ -78,6 +82,10 @@ const DEFAULT_SORT_STATES: Record<ViewType, SortState> = {
   teams: { key: "tiles", direction: "desc" },
   ships: { key: "owner", direction: "asc" },
   player: { key: "tiles", direction: "desc" },
+  actions: { key: "label", direction: "asc" },
+  actionEditor: { key: "label", direction: "asc" },
+  runningActions: { key: "label", direction: "asc" },
+  runningAction: { key: "label", direction: "asc" },
 };
 
 function createLeaf(view: ViewType): PanelLeafNode {
@@ -93,6 +101,10 @@ function createLeaf(view: ViewType): PanelLeafNode {
       teams: { ...DEFAULT_SORT_STATES.teams },
       ships: { ...DEFAULT_SORT_STATES.ships },
       player: { ...DEFAULT_SORT_STATES.player },
+      actions: { ...DEFAULT_SORT_STATES.actions },
+      actionEditor: { ...DEFAULT_SORT_STATES.actionEditor },
+      runningActions: { ...DEFAULT_SORT_STATES.runningActions },
+      runningAction: { ...DEFAULT_SORT_STATES.runningAction },
     },
     scrollTop: 0,
     scrollLeft: 0,
@@ -145,6 +157,33 @@ export class SidebarApp {
       toggleTrading: (playerIds, stopped) =>
         this.store.setTradingStopped(playerIds, stopped),
       showPlayerDetails: (playerId) => this.showPlayerDetails(playerId),
+      createAction: () => {
+        this.store.createAction();
+      },
+      selectAction: (actionId) => {
+        this.store.selectAction(actionId);
+      },
+      saveAction: (actionId, update) => {
+        this.store.saveAction(actionId, update);
+      },
+      deleteAction: (actionId) => {
+        this.store.deleteAction(actionId);
+      },
+      startAction: (actionId) => {
+        this.store.startAction(actionId);
+      },
+      selectRunningAction: (runningId) => {
+        this.store.selectRunningAction(runningId);
+      },
+      stopRunningAction: (runningId) => {
+        this.store.stopRunningAction(runningId);
+      },
+      updateRunningActionSetting: (runningId, settingId, value) => {
+        this.store.updateRunningActionSetting(runningId, settingId, value);
+      },
+      setRunningActionInterval: (runningId, ticks) => {
+        this.store.setRunningActionInterval(runningId, ticks);
+      },
     };
     this.renderLayout();
     this.store.subscribe((snapshot) => {
