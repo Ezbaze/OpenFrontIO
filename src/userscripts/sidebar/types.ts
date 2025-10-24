@@ -1,4 +1,13 @@
-export type ViewType = "players" | "clanmates" | "teams" | "ships" | "player";
+export type ViewType =
+  | "players"
+  | "clanmates"
+  | "teams"
+  | "ships"
+  | "player"
+  | "actions"
+  | "actionEditor"
+  | "runningActions"
+  | "runningAction";
 
 export type ShipType = "Transport" | "Trade Ship" | "Warship";
 
@@ -87,6 +96,70 @@ export interface GameSnapshot {
   allianceDurationMs: number;
   currentTimeMs: number;
   ships: ShipRecord[];
+  sidebarActions?: SidebarActionsState;
+}
+
+export type ActionRunMode = "continuous" | "once";
+
+export type SidebarActionSettingType = "text" | "number" | "toggle";
+
+export type SidebarActionSettingValue = string | number | boolean;
+
+export interface SidebarActionSetting {
+  id: string;
+  key: string;
+  label: string;
+  type: SidebarActionSettingType;
+  value: SidebarActionSettingValue;
+}
+
+export interface SidebarActionDefinition {
+  id: string;
+  name: string;
+  code: string;
+  runMode: ActionRunMode;
+  description: string;
+  runIntervalTicks: number;
+  settings: SidebarActionSetting[];
+  createdAtMs: number;
+  updatedAtMs: number;
+}
+
+export type SidebarRunningActionStatus =
+  | "running"
+  | "completed"
+  | "stopped"
+  | "failed";
+
+export interface SidebarRunningAction {
+  id: string;
+  actionId: string;
+  name: string;
+  description: string;
+  runMode: ActionRunMode;
+  runIntervalTicks: number;
+  status: SidebarRunningActionStatus;
+  startedAtMs: number;
+  lastUpdatedMs: number;
+  settings: SidebarActionSetting[];
+}
+
+export interface SidebarActionsState {
+  revision: number;
+  runningRevision: number;
+  actions: SidebarActionDefinition[];
+  running: SidebarRunningAction[];
+  selectedActionId?: string;
+  selectedRunningActionId?: string;
+}
+
+export interface SidebarActionDefinitionUpdate {
+  name: string;
+  code: string;
+  runMode: ActionRunMode;
+  description: string;
+  runIntervalTicks: number;
+  settings: SidebarActionSetting[];
 }
 
 export type PanelOrientation = "horizontal" | "vertical";

@@ -92,6 +92,14 @@
     const seconds = Math.floor((diff % 60000) / 1000);
     return `${minutes}:${seconds.toString().padStart(2, "0")}`;
   }
+  function formatTimestamp(ms) {
+    const date = new Date(ms);
+    return date.toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+  }
   function clamp(value, min, max) {
     return Math.max(min, Math.min(max, value));
   }
@@ -309,7 +317,62 @@
   const DEFAULT_ACTIONS = {
     toggleTrading: () => undefined,
     showPlayerDetails: () => undefined,
+    createAction: () => undefined,
+    selectAction: () => undefined,
+    saveAction: () => undefined,
+    deleteAction: () => undefined,
+    startAction: () => undefined,
+    selectRunningAction: () => undefined,
+    stopRunningAction: () => undefined,
+    updateRunningActionSetting: () => undefined,
+    setRunningActionInterval: () => undefined,
   };
+  const EMPTY_ACTIONS_STATE = {
+    revision: 0,
+    runningRevision: 0,
+    actions: [],
+    running: [],
+  };
+  let editorSettingIdCounter = 0;
+  function nextEditorSettingId() {
+    editorSettingIdCounter += 1;
+    return `editor-setting-${editorSettingIdCounter}`;
+  }
+  function getActionsState(snapshot) {
+    return snapshot.sidebarActions ?? EMPTY_ACTIONS_STATE;
+  }
+  function getRunModeLabel(mode) {
+    return mode === "once" ? "Run once" : "Continuous";
+  }
+  function describeRunMode(mode) {
+    return mode === "once"
+      ? "Runs a single time and removes itself from the running list."
+      : "Keeps running until you stop it manually.";
+  }
+  function formatRunStatus(status) {
+    switch (status) {
+      case "running":
+        return "Running";
+      case "completed":
+        return "Completed";
+      case "stopped":
+        return "Stopped";
+      case "failed":
+        return "Failed";
+      default:
+        return status;
+    }
+  }
+  function defaultValueForType(type) {
+    switch (type) {
+      case "number":
+        return 0;
+      case "toggle":
+        return false;
+      default:
+        return "";
+    }
+  }
   const TABLE_HEADERS = [
     { key: "label", label: "Clan / Player", align: "left" },
     { key: "tiles", label: "Tiles", align: "right" },
@@ -413,6 +476,36 @@
           existingContainer,
           actions: viewActions,
           lifecycle,
+        });
+      case "actions":
+        return renderActionsDirectoryView({
+          leaf,
+          snapshot,
+          existingContainer,
+          actions: viewActions,
+        });
+      case "actionEditor":
+        return renderActionEditorView({
+          leaf,
+          snapshot,
+          existingContainer,
+          lifecycle,
+          actions: viewActions,
+        });
+      case "runningActions":
+        return renderRunningActionsView({
+          leaf,
+          snapshot,
+          existingContainer,
+          actions: viewActions,
+        });
+      case "runningAction":
+        return renderRunningActionDetailView({
+          leaf,
+          snapshot,
+          existingContainer,
+          lifecycle,
+          actions: viewActions,
         });
       default:
         return createElement(
@@ -700,6 +793,1043 @@
     }
     container.replaceChildren(content);
     return container;
+  }
+  function renderActionsDirectoryView(options) {
+    const { leaf, snapshot, existingContainer, actions } = options;
+    const state = getActionsState(snapshot);
+    const signature = `${state.revision}:${state.selectedActionId ?? ""}:${state.running.length}`;
+    const isDirectoryContainer =
+      !!existingContainer &&
+      existingContainer.dataset.sidebarRole === "actions-directory";
+    const canReuse =
+      isDirectoryContainer && existingContainer.dataset.signature === signature;
+    const container = isDirectoryContainer
+      ? existingContainer
+      : createElement(
+          "div",
+          "relative flex-1 overflow-hidden border border-slate-900/70 bg-slate-950/60 backdrop-blur-sm",
+        );
+    container.className =
+      "relative flex-1 overflow-hidden border border-slate-900/70 bg-slate-950/60 backdrop-blur-sm";
+    container.dataset.sidebarRole = "actions-directory";
+    container.dataset.sidebarView = leaf.view;
+    if (canReuse) {
+      return container;
+    }
+    container.dataset.signature = signature;
+    const header = createElement(
+      "div",
+      "flex items-center justify-between gap-2 border-b border-slate-800/70 bg-slate-900/80 px-3 py-2",
+    );
+    header.appendChild(
+      createElement(
+        "div",
+        "text-xs font-semibold uppercase tracking-wide text-slate-300",
+        "Actions",
+      ),
+    );
+    const newButton = createElement(
+      "button",
+      "rounded-md border border-slate-700 bg-slate-900/60 px-3 py-1.5 text-xs font-semibold text-slate-100 transition-colors hover:border-sky-500/70 hover:text-sky-200",
+      "New action",
+    );
+    newButton.type = "button";
+    newButton.addEventListener("click", () => {
+      actions.createAction?.();
+    });
+    header.appendChild(newButton);
+    const tableWrapper = createElement("div", "flex-1 overflow-auto");
+    tableWrapper.dataset.sidebarRole = "table-container";
+    const table = createElement(
+      "table",
+      "min-w-full divide-y divide-slate-800 text-xs text-slate-100",
+    );
+    const thead = createElement(
+      "thead",
+      "bg-slate-900/85 text-[0.65rem] uppercase tracking-wide text-slate-300",
+    );
+    const headerRow = createElement("tr");
+    const columns = [
+      { key: "name", label: "Action", align: "left" },
+      { key: "controls", label: "", align: "right" },
+    ];
+    for (const column of columns) {
+      const th = createElement(
+        "th",
+        `px-3 py-2 font-semibold ${column.align === "right" ? "text-right" : "text-left"}`,
+      );
+      th.textContent = column.label;
+      headerRow.appendChild(th);
+    }
+    thead.appendChild(headerRow);
+    table.appendChild(thead);
+    const tbody = createElement("tbody", "divide-y divide-slate-900/80");
+    const runningLookup = new Set(state.running.map((run) => run.actionId));
+    if (state.actions.length === 0) {
+      const row = createElement("tr");
+      const cell = createElement(
+        "td",
+        "px-4 py-6 text-center text-xs text-slate-400",
+        "No actions yet. Create a new action to get started.",
+      );
+      cell.colSpan = columns.length;
+      row.appendChild(cell);
+      tbody.appendChild(row);
+    } else {
+      for (const action of state.actions) {
+        const isSelected = state.selectedActionId === action.id;
+        const isRunning = runningLookup.has(action.id);
+        const row = createElement(
+          "tr",
+          `cursor-pointer transition-colors ${
+            isSelected
+              ? "bg-slate-800/50 ring-1 ring-sky-500/40"
+              : "hover:bg-slate-800/30"
+          }`,
+        );
+        row.dataset.actionId = action.id;
+        row.addEventListener("click", () => {
+          actions.selectAction?.(action.id);
+        });
+        const nameCell = createElement("td", "px-3 py-3 align-top");
+        const nameLine = createElement(
+          "div",
+          "flex flex-wrap items-center gap-2 text-sm font-semibold text-slate-100",
+          action.name,
+        );
+        if (isRunning) {
+          nameLine.appendChild(
+            createElement(
+              "span",
+              "rounded-full bg-emerald-500/20 px-2 py-0.5 text-[0.6rem] font-semibold uppercase tracking-wide text-emerald-200",
+              "Running",
+            ),
+          );
+        }
+        nameCell.appendChild(nameLine);
+        row.appendChild(nameCell);
+        const controlsCell = createElement(
+          "td",
+          "px-3 py-3 align-top text-right",
+        );
+        const controls = createElement("div", "flex justify-end gap-2");
+        const runButton = createElement(
+          "button",
+          "rounded-md border border-sky-500/50 bg-sky-500/10 px-3 py-1 text-xs font-semibold text-sky-100 transition-colors hover:bg-sky-500/20",
+          "Run",
+        );
+        runButton.type = "button";
+        runButton.addEventListener("click", (event) => {
+          event.stopPropagation();
+          actions.startAction?.(action.id);
+        });
+        controls.appendChild(runButton);
+        const editButton = createElement(
+          "button",
+          "rounded-md border border-slate-700 bg-slate-800/70 px-3 py-1 text-xs font-medium text-slate-200 transition-colors hover:border-sky-500/60 hover:text-sky-200",
+          "Edit",
+        );
+        editButton.type = "button";
+        editButton.addEventListener("click", (event) => {
+          event.stopPropagation();
+          actions.selectAction?.(action.id);
+        });
+        controls.appendChild(editButton);
+        controlsCell.appendChild(controls);
+        row.appendChild(controlsCell);
+        tbody.appendChild(row);
+      }
+    }
+    table.appendChild(tbody);
+    tableWrapper.appendChild(table);
+    container.replaceChildren(header, tableWrapper);
+    return container;
+  }
+  function renderActionEditorView(options) {
+    const { leaf, snapshot, existingContainer, actions } = options;
+    const state = getActionsState(snapshot);
+    const selectedAction = state.actions.find(
+      (action) => action.id === state.selectedActionId,
+    );
+    const signature = selectedAction
+      ? `${state.revision}:${selectedAction.id}:${selectedAction.updatedAtMs}`
+      : `${state.revision}:none`;
+    const prior = existingContainer;
+    const isEditorContainer =
+      !!prior && prior.dataset.sidebarRole === "action-editor";
+    const container = isEditorContainer
+      ? prior
+      : createElement(
+          "div",
+          "relative flex-1 overflow-auto border border-slate-900/70 bg-slate-950/60 backdrop-blur-sm",
+        );
+    container.className =
+      "relative flex-1 overflow-auto border border-slate-900/70 bg-slate-950/60 backdrop-blur-sm";
+    container.dataset.sidebarRole = "action-editor";
+    container.dataset.sidebarView = leaf.view;
+    if (container.dataset.signature === signature) {
+      return container;
+    }
+    container.dataset.signature = signature;
+    container.formState = undefined;
+    if (!selectedAction) {
+      container.replaceChildren(
+        createElement(
+          "div",
+          "flex h-full items-center justify-center p-6 text-center text-sm text-slate-400",
+          state.actions.length === 0
+            ? "Create an action to begin editing its script."
+            : "Select an action from the Actions view to edit its script and settings.",
+        ),
+      );
+      return container;
+    }
+    const formState = {
+      id: selectedAction.id,
+      name: selectedAction.name,
+      runMode: selectedAction.runMode,
+      description: selectedAction.description ?? "",
+      runIntervalTicks: selectedAction.runIntervalTicks ?? 1,
+      code: selectedAction.code,
+      settings: selectedAction.settings.map((setting) => ({
+        id: setting.id ?? nextEditorSettingId(),
+        key: setting.key,
+        label: setting.label,
+        type: setting.type,
+        value: setting.value ?? defaultValueForType(setting.type),
+      })),
+    };
+    container.formState = formState;
+    const layout = createElement(
+      "div",
+      "flex min-h-full flex-col gap-6 p-4 text-sm text-slate-100",
+    );
+    const header = createElement(
+      "div",
+      "flex flex-wrap items-start justify-between gap-3 border-b border-slate-800/70 pb-3",
+    );
+    const initialTitle = formState.name.trim();
+    const titlePreview = createElement(
+      "div",
+      "text-lg font-semibold text-slate-100",
+      initialTitle === "" ? "Untitled action" : formState.name,
+    );
+    const descriptionPreview = createElement(
+      "div",
+      "text-sm text-slate-400",
+      formState.description.trim() === ""
+        ? "Add a description..."
+        : formState.description,
+    );
+    if (formState.description.trim() === "") {
+      descriptionPreview.classList.add("italic", "text-slate-500");
+    }
+    const headerText = createElement("div", "flex flex-col gap-1");
+    headerText.appendChild(titlePreview);
+    headerText.appendChild(descriptionPreview);
+    header.appendChild(headerText);
+    const headerMeta = createElement(
+      "div",
+      "flex flex-col items-end gap-1 text-right text-[0.7rem] text-slate-400",
+    );
+    const headerMode = createElement(
+      "div",
+      "",
+      describeRunMode(formState.runMode),
+    );
+    headerMeta.appendChild(headerMode);
+    headerMeta.appendChild(
+      createElement(
+        "div",
+        "text-[0.65rem] uppercase tracking-wide text-slate-500",
+        `Last updated ${formatTimestamp(selectedAction.updatedAtMs)}`,
+      ),
+    );
+    header.appendChild(headerMeta);
+    layout.appendChild(header);
+    const nameField = createElement("label", "flex flex-col gap-1");
+    nameField.appendChild(
+      createElement(
+        "span",
+        "text-xs uppercase tracking-wide text-slate-400",
+        "Name",
+      ),
+    );
+    const nameInput = document.createElement("input");
+    nameInput.type = "text";
+    nameInput.className =
+      "rounded-md border border-slate-700 bg-slate-900/80 px-3 py-1.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-500/70";
+    nameInput.value = formState.name;
+    nameInput.addEventListener("input", () => {
+      formState.name = nameInput.value;
+      const trimmed = nameInput.value.trim();
+      titlePreview.textContent =
+        trimmed === "" ? "Untitled action" : nameInput.value;
+    });
+    nameField.appendChild(nameInput);
+    layout.appendChild(nameField);
+    const descriptionField = createElement("label", "flex flex-col gap-1");
+    descriptionField.appendChild(
+      createElement(
+        "span",
+        "text-xs uppercase tracking-wide text-slate-400",
+        "Description",
+      ),
+    );
+    const descriptionInput = document.createElement("textarea");
+    descriptionInput.className =
+      "min-h-[72px] w-full rounded-md border border-slate-700 bg-slate-900/80 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-500/70";
+    descriptionInput.value = formState.description;
+    descriptionInput.addEventListener("input", () => {
+      formState.description = descriptionInput.value;
+      const trimmed = descriptionInput.value.trim();
+      if (trimmed === "") {
+        descriptionPreview.textContent = "Add a description...";
+        descriptionPreview.classList.add("italic", "text-slate-500");
+      } else {
+        descriptionPreview.textContent = descriptionInput.value;
+        descriptionPreview.classList.remove("italic", "text-slate-500");
+      }
+    });
+    descriptionField.appendChild(descriptionInput);
+    layout.appendChild(descriptionField);
+    const runConfigRow = createElement("div", "flex flex-wrap gap-4");
+    const modeField = createElement("label", "flex flex-col gap-1");
+    modeField.appendChild(
+      createElement(
+        "span",
+        "text-xs uppercase tracking-wide text-slate-400",
+        "Run mode",
+      ),
+    );
+    const modeSelect = document.createElement("select");
+    modeSelect.className =
+      "w-48 rounded-md border border-slate-700 bg-slate-900/80 px-3 py-1.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-500/70";
+    for (const option of [
+      { value: "continuous", label: "Continuous" },
+      { value: "once", label: "Run once" },
+    ]) {
+      const opt = document.createElement("option");
+      opt.value = option.value;
+      opt.textContent = option.label;
+      modeSelect.appendChild(opt);
+    }
+    modeSelect.value = formState.runMode;
+    modeField.appendChild(modeSelect);
+    runConfigRow.appendChild(modeField);
+    const intervalField = createElement("label", "flex flex-col gap-1");
+    intervalField.appendChild(
+      createElement(
+        "span",
+        "text-xs uppercase tracking-wide text-slate-400",
+        "Run every (ticks)",
+      ),
+    );
+    const intervalInput = document.createElement("input");
+    intervalInput.type = "number";
+    intervalInput.min = "1";
+    intervalInput.className =
+      "w-40 rounded-md border border-slate-700 bg-slate-900/80 px-3 py-1.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-500/70";
+    intervalInput.value = String(formState.runIntervalTicks);
+    intervalInput.addEventListener("change", () => {
+      const numeric = Number(intervalInput.value);
+      const normalized =
+        Number.isFinite(numeric) && numeric > 0 ? Math.floor(numeric) : 1;
+      intervalInput.value = String(normalized);
+      formState.runIntervalTicks = normalized;
+    });
+    intervalField.appendChild(intervalInput);
+    if (formState.runMode !== "continuous") {
+      intervalField.classList.add("hidden");
+    }
+    runConfigRow.appendChild(intervalField);
+    modeSelect.addEventListener("change", () => {
+      formState.runMode = modeSelect.value;
+      headerMode.textContent = describeRunMode(formState.runMode);
+      intervalField.classList.toggle(
+        "hidden",
+        formState.runMode !== "continuous",
+      );
+    });
+    layout.appendChild(runConfigRow);
+    const codeField = createElement("div", "flex flex-col gap-2");
+    codeField.appendChild(
+      createElement(
+        "span",
+        "text-xs uppercase tracking-wide text-slate-400",
+        "Script",
+      ),
+    );
+    const codeArea = document.createElement("textarea");
+    codeArea.className =
+      "min-h-[220px] w-full rounded-md border border-slate-700 bg-slate-950/80 px-3 py-2 font-mono text-xs text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-500/70";
+    codeArea.value = formState.code;
+    codeArea.spellcheck = false;
+    codeArea.addEventListener("input", () => {
+      formState.code = codeArea.value;
+    });
+    codeField.appendChild(codeArea);
+    layout.appendChild(codeField);
+    const settingsSection = createElement("div", "flex flex-col gap-3");
+    const settingsHeader = createElement(
+      "div",
+      "flex items-center justify-between gap-2",
+    );
+    settingsHeader.appendChild(
+      createElement(
+        "span",
+        "text-xs uppercase tracking-wide text-slate-400",
+        "Settings",
+      ),
+    );
+    const settingsList = createElement("div", "flex flex-col gap-3");
+    const removeSetting = (settingId) => {
+      const index = formState.settings.findIndex(
+        (entry) => entry.id === settingId,
+      );
+      if (index !== -1) {
+        formState.settings.splice(index, 1);
+      }
+    };
+    for (const setting of formState.settings) {
+      settingsList.appendChild(
+        createActionSettingEditorCard(formState, setting, removeSetting),
+      );
+    }
+    const addSettingButton = createElement(
+      "button",
+      "rounded-md border border-slate-700 bg-slate-900/70 px-3 py-1 text-xs font-medium text-slate-200 transition-colors hover:border-sky-500/60 hover:text-sky-200",
+      "Add setting",
+    );
+    addSettingButton.type = "button";
+    addSettingButton.addEventListener("click", () => {
+      const newSetting = {
+        id: nextEditorSettingId(),
+        key: "",
+        label: "",
+        type: "text",
+        value: "",
+      };
+      formState.settings.push(newSetting);
+      settingsList.appendChild(
+        createActionSettingEditorCard(formState, newSetting, removeSetting),
+      );
+    });
+    settingsHeader.appendChild(addSettingButton);
+    settingsSection.appendChild(settingsHeader);
+    if (formState.settings.length === 0) {
+      settingsSection.appendChild(
+        createElement(
+          "p",
+          "text-[0.75rem] text-slate-400",
+          "Add settings to expose configurable values that can be adjusted while the action runs.",
+        ),
+      );
+    }
+    settingsSection.appendChild(settingsList);
+    layout.appendChild(settingsSection);
+    const footer = createElement(
+      "div",
+      "flex flex-wrap items-center justify-between gap-3 border-t border-slate-800/70 pt-4",
+    );
+    const leftControls = createElement("div", "flex items-center gap-2");
+    const runButton = createElement(
+      "button",
+      "rounded-md border border-sky-500/60 bg-sky-500/10 px-3 py-1.5 text-xs font-semibold text-sky-100 transition-colors hover:bg-sky-500/20",
+      "Run action",
+    );
+    runButton.type = "button";
+    runButton.addEventListener("click", () => {
+      actions.startAction?.(selectedAction.id);
+    });
+    leftControls.appendChild(runButton);
+    footer.appendChild(leftControls);
+    const rightControls = createElement("div", "flex items-center gap-2");
+    const deleteButton = createElement(
+      "button",
+      "rounded-md border border-rose-500/50 bg-rose-500/10 px-3 py-1.5 text-xs font-semibold text-rose-200 transition-colors hover:bg-rose-500/20",
+      "Delete",
+    );
+    deleteButton.type = "button";
+    deleteButton.addEventListener("click", () => {
+      actions.deleteAction?.(selectedAction.id);
+    });
+    const saveButton = createElement(
+      "button",
+      "rounded-md border border-sky-500/60 bg-sky-500/20 px-4 py-1.5 text-xs font-semibold text-sky-100 transition-colors hover:bg-sky-500/30",
+      "Save changes",
+    );
+    saveButton.type = "button";
+    saveButton.addEventListener("click", () => {
+      const update = {
+        name: formState.name,
+        code: formState.code,
+        runMode: formState.runMode,
+        description: formState.description,
+        runIntervalTicks: formState.runIntervalTicks,
+        settings: formState.settings.map((setting) => ({
+          id: setting.id,
+          key: setting.key,
+          label: setting.label,
+          type: setting.type,
+          value:
+            setting.type === "number"
+              ? Number(setting.value)
+              : setting.type === "toggle"
+                ? Boolean(setting.value)
+                : String(setting.value ?? ""),
+        })),
+      };
+      actions.saveAction?.(selectedAction.id, update);
+    });
+    rightControls.appendChild(deleteButton);
+    rightControls.appendChild(saveButton);
+    footer.appendChild(rightControls);
+    layout.appendChild(footer);
+    container.replaceChildren(layout);
+    return container;
+  }
+  function renderRunningActionsView(options) {
+    const { leaf, snapshot, existingContainer, actions } = options;
+    const state = getActionsState(snapshot);
+    const signature = `${state.runningRevision}:${state.selectedRunningActionId ?? ""}:${state.running.length}`;
+    const isContainer =
+      !!existingContainer &&
+      existingContainer.dataset.sidebarRole === "running-actions";
+    const canReuse =
+      isContainer && existingContainer.dataset.signature === signature;
+    const container = isContainer
+      ? existingContainer
+      : createElement(
+          "div",
+          "relative flex-1 overflow-hidden border border-slate-900/70 bg-slate-950/60 backdrop-blur-sm",
+        );
+    container.className =
+      "relative flex-1 overflow-hidden border border-slate-900/70 bg-slate-950/60 backdrop-blur-sm";
+    container.dataset.sidebarRole = "running-actions";
+    container.dataset.sidebarView = leaf.view;
+    if (canReuse) {
+      return container;
+    }
+    container.dataset.signature = signature;
+    const header = createElement(
+      "div",
+      "flex items-center justify-between gap-2 border-b border-slate-800/70 bg-slate-900/80 px-3 py-2",
+    );
+    header.appendChild(
+      createElement(
+        "div",
+        "text-xs font-semibold uppercase tracking-wide text-slate-300",
+        "Running actions",
+      ),
+    );
+    header.appendChild(
+      createElement(
+        "div",
+        "text-[0.7rem] text-slate-400",
+        `${state.running.length} active`,
+      ),
+    );
+    const tableWrapper = createElement("div", "flex-1 overflow-auto");
+    tableWrapper.dataset.sidebarRole = "table-container";
+    if (state.running.length === 0) {
+      tableWrapper.replaceChildren(
+        createElement(
+          "div",
+          "flex h-full items-center justify-center px-4 py-8 text-center text-sm text-slate-400",
+          "No actions are currently running.",
+        ),
+      );
+      container.replaceChildren(header, tableWrapper);
+      return container;
+    }
+    const table = createElement(
+      "table",
+      "min-w-full divide-y divide-slate-800 text-xs text-slate-100",
+    );
+    const thead = createElement(
+      "thead",
+      "bg-slate-900/85 text-[0.65rem] uppercase tracking-wide text-slate-300",
+    );
+    const headerRow = createElement("tr");
+    const columns = [
+      { key: "name", label: "Action", align: "left" },
+      { key: "mode", label: "Mode", align: "left" },
+      { key: "started", label: "Started", align: "left" },
+      { key: "controls", label: "", align: "right" },
+    ];
+    for (const column of columns) {
+      const th = createElement(
+        "th",
+        `px-3 py-2 font-semibold ${column.align === "right" ? "text-right" : "text-left"}`,
+      );
+      th.textContent = column.label;
+      headerRow.appendChild(th);
+    }
+    thead.appendChild(headerRow);
+    table.appendChild(thead);
+    const tbody = createElement("tbody", "divide-y divide-slate-900/80");
+    for (const run of state.running) {
+      const isSelected = state.selectedRunningActionId === run.id;
+      const row = createElement(
+        "tr",
+        `cursor-pointer transition-colors ${
+          isSelected
+            ? "bg-slate-800/50 ring-1 ring-sky-500/40"
+            : "hover:bg-slate-800/30"
+        }`,
+      );
+      row.dataset.runningActionId = run.id;
+      row.addEventListener("click", () => {
+        actions.selectRunningAction?.(run.id);
+      });
+      const nameCell = createElement("td", "px-3 py-3 align-top");
+      const nameLine = createElement(
+        "div",
+        "flex flex-wrap items-center gap-2 text-sm font-semibold text-slate-100",
+        run.name,
+      );
+      nameLine.appendChild(createRunStatusBadge(run.status));
+      nameCell.appendChild(nameLine);
+      row.appendChild(nameCell);
+      row.appendChild(
+        createElement(
+          "td",
+          "px-3 py-3 align-top text-[0.75rem] uppercase tracking-wide text-slate-400",
+          getRunModeLabel(run.runMode),
+        ),
+      );
+      row.appendChild(
+        createElement(
+          "td",
+          "px-3 py-3 align-top text-[0.75rem] text-slate-300",
+          formatTimestamp(run.startedAtMs),
+        ),
+      );
+      const controlsCell = createElement("td", "px-3 py-3 align-top");
+      const stopButton = createElement(
+        "button",
+        "rounded-md border border-rose-500/40 bg-rose-500/10 px-3 py-1 text-xs font-semibold text-rose-200 transition-colors hover:bg-rose-500/20",
+        "Stop",
+      );
+      stopButton.type = "button";
+      stopButton.addEventListener("click", (event) => {
+        event.stopPropagation();
+        actions.stopRunningAction?.(run.id);
+      });
+      if (run.status !== "running") {
+        stopButton.disabled = true;
+        stopButton.classList.add("cursor-not-allowed", "opacity-50");
+      }
+      controlsCell.appendChild(stopButton);
+      row.appendChild(controlsCell);
+      tbody.appendChild(row);
+    }
+    table.appendChild(tbody);
+    tableWrapper.replaceChildren(table);
+    container.replaceChildren(header, tableWrapper);
+    return container;
+  }
+  function renderRunningActionDetailView(options) {
+    const { leaf, snapshot, existingContainer, actions } = options;
+    const state = getActionsState(snapshot);
+    const selectedRun = state.running.find(
+      (run) => run.id === state.selectedRunningActionId,
+    );
+    const signature = selectedRun
+      ? `${state.runningRevision}:${selectedRun.id}:${selectedRun.lastUpdatedMs}`
+      : `${state.runningRevision}:none`;
+    const isContainer =
+      !!existingContainer &&
+      existingContainer.dataset.sidebarRole === "running-action";
+    const container = isContainer
+      ? existingContainer
+      : createElement(
+          "div",
+          "relative flex-1 overflow-auto border border-slate-900/70 bg-slate-950/60 backdrop-blur-sm",
+        );
+    container.className =
+      "relative flex-1 overflow-auto border border-slate-900/70 bg-slate-950/60 backdrop-blur-sm";
+    container.dataset.sidebarRole = "running-action";
+    container.dataset.sidebarView = leaf.view;
+    if (container.dataset.signature === signature) {
+      return container;
+    }
+    container.dataset.signature = signature;
+    if (!selectedRun) {
+      container.replaceChildren(
+        createElement(
+          "div",
+          "flex h-full items-center justify-center p-6 text-center text-sm text-slate-400",
+          state.running.length === 0
+            ? "No actions are currently running."
+            : "Select a running action to adjust its settings.",
+        ),
+      );
+      return container;
+    }
+    const layout = createElement(
+      "div",
+      "flex min-h-full flex-col gap-6 p-4 text-sm text-slate-100",
+    );
+    const header = createElement(
+      "div",
+      "flex flex-wrap items-start justify-between gap-3 border-b border-slate-800/70 pb-3",
+    );
+    const headerText = createElement("div", "flex flex-col gap-1");
+    const titleLine = createElement(
+      "div",
+      "flex flex-wrap items-center gap-2 text-lg font-semibold text-slate-100",
+    );
+    titleLine.appendChild(createElement("span", "", selectedRun.name));
+    titleLine.appendChild(createRunStatusBadge(selectedRun.status));
+    headerText.appendChild(titleLine);
+    const trimmedDescription = selectedRun.description?.trim() ?? "";
+    if (trimmedDescription !== "") {
+      headerText.appendChild(
+        createElement("div", "text-sm text-slate-400", trimmedDescription),
+      );
+    }
+    headerText.appendChild(
+      createElement(
+        "div",
+        "text-[0.7rem] text-slate-400",
+        describeRunMode(selectedRun.runMode),
+      ),
+    );
+    header.appendChild(headerText);
+    const stopButton = createElement(
+      "button",
+      "rounded-md border border-rose-500/50 bg-rose-500/10 px-3 py-1.5 text-xs font-semibold text-rose-200 transition-colors hover:bg-rose-500/20",
+      "Stop action",
+    );
+    stopButton.type = "button";
+    stopButton.addEventListener("click", () => {
+      actions.stopRunningAction?.(selectedRun.id);
+    });
+    if (selectedRun.status !== "running") {
+      stopButton.disabled = true;
+      stopButton.classList.add("cursor-not-allowed", "opacity-50");
+    }
+    header.appendChild(stopButton);
+    layout.appendChild(header);
+    const meta = createElement(
+      "div",
+      "grid gap-3 text-[0.75rem] sm:grid-cols-3",
+    );
+    meta.appendChild(
+      createSummaryStat("Status", formatRunStatus(selectedRun.status)),
+    );
+    meta.appendChild(
+      createSummaryStat("Started", formatTimestamp(selectedRun.startedAtMs)),
+    );
+    meta.appendChild(
+      createSummaryStat(
+        "Last update",
+        formatTimestamp(selectedRun.lastUpdatedMs),
+      ),
+    );
+    layout.appendChild(meta);
+    if (selectedRun.runMode === "continuous") {
+      const intervalField = createElement(
+        "label",
+        "flex w-full max-w-xs flex-col gap-1",
+      );
+      intervalField.appendChild(
+        createElement(
+          "span",
+          "text-xs uppercase tracking-wide text-slate-400",
+          "Run every (ticks)",
+        ),
+      );
+      const intervalInput = document.createElement("input");
+      intervalInput.type = "number";
+      intervalInput.min = "1";
+      intervalInput.className =
+        "w-full rounded-md border border-slate-700 bg-slate-900/80 px-3 py-1.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-500/70";
+      intervalInput.value = String(selectedRun.runIntervalTicks ?? 1);
+      intervalInput.addEventListener("change", () => {
+        const numeric = Number(intervalInput.value);
+        const normalized =
+          Number.isFinite(numeric) && numeric > 0 ? Math.floor(numeric) : 1;
+        intervalInput.value = String(normalized);
+        if (normalized === selectedRun.runIntervalTicks) {
+          return;
+        }
+        actions.setRunningActionInterval?.(selectedRun.id, normalized);
+      });
+      intervalField.appendChild(intervalInput);
+      layout.appendChild(intervalField);
+    }
+    const settingsSection = createElement("div", "flex flex-col gap-3");
+    settingsSection.appendChild(
+      createElement(
+        "span",
+        "text-xs uppercase tracking-wide text-slate-400",
+        "Runtime settings",
+      ),
+    );
+    const settingsList = createElement("div", "flex flex-col gap-3");
+    if (selectedRun.settings.length === 0) {
+      settingsList.appendChild(
+        createElement(
+          "p",
+          "text-[0.75rem] text-slate-400",
+          "This action does not expose any runtime settings.",
+        ),
+      );
+    } else {
+      for (const setting of selectedRun.settings) {
+        settingsList.appendChild(
+          createRunningSettingField(selectedRun.id, setting, actions),
+        );
+      }
+    }
+    settingsSection.appendChild(settingsList);
+    layout.appendChild(settingsSection);
+    container.replaceChildren(layout);
+    return container;
+  }
+  function createActionSettingEditorCard(formState, setting, onRemove) {
+    const card = createElement(
+      "div",
+      "rounded-md border border-slate-800/70 bg-slate-900/70 p-3",
+    );
+    const header = createElement("div", "flex flex-wrap items-center gap-3");
+    const labelField = createElement(
+      "label",
+      "flex min-w-[160px] flex-1 flex-col gap-1",
+    );
+    labelField.appendChild(
+      createElement(
+        "span",
+        "text-[0.65rem] uppercase tracking-wide text-slate-400",
+        "Label",
+      ),
+    );
+    const labelInput = document.createElement("input");
+    labelInput.type = "text";
+    labelInput.className =
+      "rounded-md border border-slate-700 bg-slate-950/70 px-3 py-1 text-xs text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-500/70";
+    labelInput.value = setting.label;
+    labelInput.addEventListener("input", () => {
+      setting.label = labelInput.value;
+    });
+    labelField.appendChild(labelInput);
+    header.appendChild(labelField);
+    const keyField = createElement("label", "flex w-36 flex-col gap-1");
+    keyField.appendChild(
+      createElement(
+        "span",
+        "text-[0.65rem] uppercase tracking-wide text-slate-400",
+        "Key",
+      ),
+    );
+    const keyInput = document.createElement("input");
+    keyInput.type = "text";
+    keyInput.className =
+      "rounded-md border border-slate-700 bg-slate-950/70 px-3 py-1 text-xs text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-500/70";
+    keyInput.value = setting.key;
+    keyInput.addEventListener("input", () => {
+      setting.key = keyInput.value;
+    });
+    keyField.appendChild(keyInput);
+    header.appendChild(keyField);
+    const typeField = createElement("label", "flex w-32 flex-col gap-1");
+    typeField.appendChild(
+      createElement(
+        "span",
+        "text-[0.65rem] uppercase tracking-wide text-slate-400",
+        "Type",
+      ),
+    );
+    const typeSelect = document.createElement("select");
+    typeSelect.className =
+      "rounded-md border border-slate-700 bg-slate-950/70 px-2 py-1 text-xs text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-500/70";
+    for (const option of [
+      { value: "text", label: "Text" },
+      { value: "number", label: "Number" },
+      { value: "toggle", label: "Toggle" },
+    ]) {
+      const opt = document.createElement("option");
+      opt.value = option.value;
+      opt.textContent = option.label;
+      typeSelect.appendChild(opt);
+    }
+    typeSelect.value = setting.type;
+    typeField.appendChild(typeSelect);
+    header.appendChild(typeField);
+    const removeButton = createElement(
+      "button",
+      "rounded-md border border-slate-700 bg-transparent px-2 py-1 text-xs text-slate-300 transition-colors hover:border-rose-500/60 hover:text-rose-300",
+      "Remove",
+    );
+    removeButton.type = "button";
+    removeButton.addEventListener("click", (event) => {
+      event.preventDefault();
+      onRemove(setting.id);
+      card.remove();
+    });
+    header.appendChild(removeButton);
+    card.appendChild(header);
+    const valueWrapper = createElement("div", "mt-3 flex flex-col gap-1");
+    valueWrapper.appendChild(
+      createElement(
+        "span",
+        "text-[0.65rem] uppercase tracking-wide text-slate-400",
+        "Value",
+      ),
+    );
+    const valueContainer = createElement("div", "flex items-center gap-2");
+    const updateValue = (value) => {
+      setting.value = value;
+    };
+    let control = createSettingValueInput(setting, updateValue);
+    valueContainer.appendChild(control);
+    valueWrapper.appendChild(valueContainer);
+    card.appendChild(valueWrapper);
+    typeSelect.addEventListener("change", () => {
+      const nextType = typeSelect.value;
+      setting.type = nextType;
+      setting.value = defaultValueForType(nextType);
+      control = createSettingValueInput(setting, updateValue);
+      valueContainer.replaceChildren(control);
+    });
+    return card;
+  }
+  function createSettingValueInput(setting, onChange) {
+    switch (setting.type) {
+      case "number": {
+        const input = document.createElement("input");
+        input.type = "number";
+        input.className =
+          "w-40 rounded-md border border-slate-700 bg-slate-950/70 px-3 py-1 text-xs text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-500/70";
+        input.value = setting.value !== undefined ? String(setting.value) : "0";
+        input.addEventListener("change", () => {
+          const numeric = Number(input.value);
+          onChange(Number.isFinite(numeric) ? numeric : 0);
+        });
+        return input;
+      }
+      case "toggle": {
+        const wrapper = createElement(
+          "label",
+          "flex items-center gap-2 text-xs text-slate-200",
+        );
+        const toggle = document.createElement("input");
+        toggle.type = "checkbox";
+        toggle.className =
+          "h-4 w-4 rounded border border-slate-600 bg-slate-900 text-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-500";
+        toggle.checked = Boolean(setting.value);
+        toggle.addEventListener("change", () => {
+          onChange(toggle.checked);
+        });
+        wrapper.appendChild(toggle);
+        wrapper.appendChild(createElement("span", "", "Enabled"));
+        return wrapper;
+      }
+      default: {
+        const input = document.createElement("input");
+        input.type = "text";
+        input.className =
+          "w-full rounded-md border border-slate-700 bg-slate-950/70 px-3 py-1 text-xs text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-500/70";
+        input.value = setting.value !== undefined ? String(setting.value) : "";
+        input.addEventListener("input", () => {
+          onChange(input.value);
+        });
+        return input;
+      }
+    }
+  }
+  function createRunningSettingField(runId, setting, actions) {
+    const field = createElement(
+      "div",
+      "rounded-md border border-slate-800/70 bg-slate-900/70 p-3",
+    );
+    const header = createElement(
+      "div",
+      "flex items-center justify-between gap-2",
+    );
+    const rawLabel = setting.label?.trim() ?? "";
+    const rawKey = setting.key?.trim() ?? "";
+    const displayLabel =
+      rawLabel !== "" ? rawLabel : rawKey !== "" ? rawKey : "Setting";
+    header.appendChild(
+      createElement("div", "text-sm font-medium text-slate-100", displayLabel),
+    );
+    header.appendChild(
+      createElement(
+        "span",
+        "text-[0.65rem] uppercase tracking-wide text-slate-400",
+        setting.type,
+      ),
+    );
+    field.appendChild(header);
+    if (setting.key) {
+      field.appendChild(
+        createElement(
+          "div",
+          "text-[0.65rem] text-slate-500",
+          `Key: ${setting.key}`,
+        ),
+      );
+    }
+    const controlContainer = createElement("div", "mt-3");
+    switch (setting.type) {
+      case "number": {
+        const input = document.createElement("input");
+        input.type = "number";
+        input.className =
+          "w-40 rounded-md border border-slate-700 bg-slate-950/70 px-3 py-1 text-xs text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-500/70";
+        input.value = setting.value !== undefined ? String(setting.value) : "0";
+        input.addEventListener("change", () => {
+          const numeric = Number(input.value);
+          actions.updateRunningActionSetting?.(
+            runId,
+            setting.id,
+            Number.isFinite(numeric) ? numeric : 0,
+          );
+        });
+        controlContainer.appendChild(input);
+        break;
+      }
+      case "toggle": {
+        const wrapper = createElement(
+          "label",
+          "flex items-center gap-2 text-xs text-slate-200",
+        );
+        const toggle = document.createElement("input");
+        toggle.type = "checkbox";
+        toggle.className =
+          "h-4 w-4 rounded border border-slate-600 bg-slate-900 text-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-500";
+        toggle.checked = Boolean(setting.value);
+        toggle.addEventListener("change", () => {
+          actions.updateRunningActionSetting?.(
+            runId,
+            setting.id,
+            toggle.checked,
+          );
+        });
+        wrapper.appendChild(toggle);
+        wrapper.appendChild(createElement("span", "", "Enabled"));
+        controlContainer.appendChild(wrapper);
+        break;
+      }
+      default: {
+        const input = document.createElement("input");
+        input.type = "text";
+        input.className =
+          "w-full rounded-md border border-slate-700 bg-slate-950/70 px-3 py-1 text-xs text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-500/70";
+        input.value = setting.value !== undefined ? String(setting.value) : "";
+        input.addEventListener("change", () => {
+          actions.updateRunningActionSetting?.(runId, setting.id, input.value);
+        });
+        controlContainer.appendChild(input);
+        break;
+      }
+    }
+    field.appendChild(controlContainer);
+    return field;
   }
   function createTableShell(options) {
     const { sortState, onSort, existingContainer, view, headers } = options;
@@ -1369,6 +2499,18 @@
     );
     return badge;
   }
+  function createRunStatusBadge(status) {
+    const baseClass =
+      "rounded-full px-2 py-0.5 text-[0.6rem] font-semibold uppercase tracking-wide";
+    const styles = {
+      running: "bg-emerald-500/20 text-emerald-200",
+      completed: "bg-sky-500/20 text-sky-200",
+      stopped: "bg-amber-500/20 text-amber-200",
+      failed: "bg-rose-500/20 text-rose-200",
+    };
+    const className = `${baseClass} ${styles[status] ?? "bg-slate-700/60 text-slate-200"}`;
+    return createElement("span", className, formatRunStatus(status));
+  }
   function createSummaryStat(label, value) {
     const wrapper = createElement(
       "div",
@@ -1738,6 +2880,10 @@
     { value: "teams", label: "Teams" },
     { value: "ships", label: "Ships" },
     { value: "player", label: "Player panel" },
+    { value: "actions", label: "Actions" },
+    { value: "actionEditor", label: "Action Editor" },
+    { value: "runningActions", label: "Running Actions" },
+    { value: "runningAction", label: "Running Action" },
   ];
   const SIDEBAR_STYLE_ID = "openfront-strategic-sidebar-styles";
   function ensureSidebarStyles() {
@@ -1777,6 +2923,10 @@
     teams: { key: "tiles", direction: "desc" },
     ships: { key: "owner", direction: "asc" },
     player: { key: "tiles", direction: "desc" },
+    actions: { key: "label", direction: "asc" },
+    actionEditor: { key: "label", direction: "asc" },
+    runningActions: { key: "label", direction: "asc" },
+    runningAction: { key: "label", direction: "asc" },
   };
   function createLeaf(view) {
     return {
@@ -1791,6 +2941,10 @@
         teams: { ...DEFAULT_SORT_STATES.teams },
         ships: { ...DEFAULT_SORT_STATES.ships },
         player: { ...DEFAULT_SORT_STATES.player },
+        actions: { ...DEFAULT_SORT_STATES.actions },
+        actionEditor: { ...DEFAULT_SORT_STATES.actionEditor },
+        runningActions: { ...DEFAULT_SORT_STATES.runningActions },
+        runningAction: { ...DEFAULT_SORT_STATES.runningAction },
       },
       scrollTop: 0,
       scrollLeft: 0,
@@ -1825,6 +2979,33 @@
         toggleTrading: (playerIds, stopped) =>
           this.store.setTradingStopped(playerIds, stopped),
         showPlayerDetails: (playerId) => this.showPlayerDetails(playerId),
+        createAction: () => {
+          this.store.createAction();
+        },
+        selectAction: (actionId) => {
+          this.store.selectAction(actionId);
+        },
+        saveAction: (actionId, update) => {
+          this.store.saveAction(actionId, update);
+        },
+        deleteAction: (actionId) => {
+          this.store.deleteAction(actionId);
+        },
+        startAction: (actionId) => {
+          this.store.startAction(actionId);
+        },
+        selectRunningAction: (runningId) => {
+          this.store.selectRunningAction(runningId);
+        },
+        stopRunningAction: (runningId) => {
+          this.store.stopRunningAction(runningId);
+        },
+        updateRunningActionSetting: (runningId, settingId, value) => {
+          this.store.updateRunningActionSetting(runningId, settingId, value);
+        },
+        setRunningActionInterval: (runningId, ticks) => {
+          this.store.setRunningActionInterval(runningId, ticks);
+        },
       };
       this.renderLayout();
       this.store.subscribe((snapshot) => {
@@ -2564,15 +3745,203 @@
       this.shipOrigins = new Map();
       this.shipDestinations = new Map();
       this.shipManifests = new Map();
-      this.snapshot = initialSnapshot ?? {
+      this.actionIdCounter = 0;
+      this.runningActionIdCounter = 0;
+      this.settingIdCounter = 0;
+      this.runningRemovalTimers = new Map();
+      this.actionRuntimes = new Map();
+      this.actionsState = this.createInitialActionsState();
+      const baseSnapshot = initialSnapshot ?? {
         players: [],
         allianceDurationMs: 0,
         currentTimeMs: Date.now(),
         ships: [],
       };
+      this.snapshot = this.attachActionsState({
+        ...baseSnapshot,
+        currentTimeMs: baseSnapshot.currentTimeMs ?? Date.now(),
+        ships: baseSnapshot.ships ?? [],
+      });
       if (typeof window !== "undefined") {
         this.scheduleGameDiscovery(true);
       }
+    }
+    attachActionsState(snapshot) {
+      return {
+        ...snapshot,
+        sidebarActions: this.actionsState,
+      };
+    }
+    createInitialActionsState() {
+      const now = Date.now();
+      const tradeBan = this.createActionDefinition({
+        name: "Trade ban everyone in the game",
+        code:
+          "// Stops trading with every known player\n" +
+          "for (const player of game.players) {\n" +
+          "  game.stopTrade(player.id);\n" +
+          "}\n",
+        runMode: "once",
+        description: "Stops trading with every known player immediately.",
+        runIntervalTicks: 1,
+        settings: [
+          this.createSetting({
+            key: "includeAllies",
+            label: "Include allies",
+            type: "toggle",
+            value: false,
+          }),
+        ],
+        timestamp: now,
+      });
+      const enableTrade = this.createActionDefinition({
+        name: "Enable trade with everyone in the game",
+        code:
+          "// Restores trading with every known player\n" +
+          "for (const player of game.players) {\n" +
+          "  game.startTrade(player.id);\n" +
+          "}\n",
+        runMode: "once",
+        description: "Resumes trading with every known player.",
+        runIntervalTicks: 1,
+        settings: [
+          this.createSetting({
+            key: "skipAllies",
+            label: "Skip current allies",
+            type: "toggle",
+            value: true,
+          }),
+        ],
+        timestamp: now,
+      });
+      const actions = [tradeBan, enableTrade];
+      return {
+        revision: 1,
+        runningRevision: 1,
+        actions,
+        running: [],
+        selectedActionId: actions[0]?.id,
+        selectedRunningActionId: undefined,
+      };
+    }
+    nextActionId() {
+      this.actionIdCounter += 1;
+      return `action-${this.actionIdCounter}`;
+    }
+    nextRunningActionId() {
+      this.runningActionIdCounter += 1;
+      return `run-${this.runningActionIdCounter}`;
+    }
+    nextSettingId() {
+      this.settingIdCounter += 1;
+      return `setting-${this.settingIdCounter}`;
+    }
+    normalizeSettingValue(type, value) {
+      switch (type) {
+        case "number": {
+          const numeric = Number(value);
+          return Number.isFinite(numeric) ? numeric : 0;
+        }
+        case "toggle":
+          return Boolean(value);
+        default:
+          return String(value ?? "");
+      }
+    }
+    createSetting(options) {
+      const type = options.type ?? "text";
+      const fallback = type === "number" ? 0 : type === "toggle" ? false : "";
+      const rawValue = options.value ?? fallback;
+      return {
+        id: this.nextSettingId(),
+        key: options.key,
+        label: options.label,
+        type,
+        value: this.normalizeSettingValue(type, rawValue),
+      };
+    }
+    createActionDefinition(options) {
+      const createdAtMs = options.timestamp ?? Date.now();
+      const settings = options.settings
+        ? options.settings.map((setting) => ({ ...setting }))
+        : [];
+      const interval = Math.max(1, Math.floor(options.runIntervalTicks ?? 1));
+      return {
+        id: this.nextActionId(),
+        name: options.name,
+        code: options.code,
+        runMode: options.runMode,
+        description: options.description?.trim() ?? "",
+        runIntervalTicks: interval,
+        settings,
+        createdAtMs,
+        updatedAtMs: createdAtMs,
+      };
+    }
+    cloneSetting(setting) {
+      return {
+        ...setting,
+        id: this.nextSettingId(),
+        value: this.normalizeSettingValue(setting.type, setting.value),
+      };
+    }
+    cloneSettings(settings) {
+      return settings.map((setting) => this.cloneSetting(setting));
+    }
+    sanitizeSetting(setting) {
+      const type = setting.type ?? "text";
+      const key = setting.key?.trim() ?? "";
+      const label = setting.label?.trim() ?? "";
+      const id = setting.id?.trim() ? setting.id : this.nextSettingId();
+      const resolvedLabel = label !== "" ? label : key !== "" ? key : "Setting";
+      return {
+        id,
+        key,
+        label: resolvedLabel,
+        type,
+        value: this.normalizeSettingValue(type, setting.value),
+      };
+    }
+    clearRunningRemovalTimer(runId) {
+      const handle = this.runningRemovalTimers.get(runId);
+      if (handle !== undefined) {
+        clearTimeout(handle);
+        this.runningRemovalTimers.delete(runId);
+      }
+    }
+    scheduleOneShotRemoval(runId) {
+      this.clearRunningRemovalTimer(runId);
+      const handler = () => {
+        this.runningRemovalTimers.delete(runId);
+        this.completeRunningAction(runId);
+      };
+      const timeout = setTimeout(handler, 1500);
+      this.runningRemovalTimers.set(runId, timeout);
+    }
+    commitActionsState(updater) {
+      this.actionsState = updater(this.actionsState);
+      this.snapshot = this.attachActionsState(this.snapshot);
+      this.notify();
+    }
+    completeRunningAction(runId) {
+      this.runningRemovalTimers.delete(runId);
+      this.clearRunningController(runId);
+      this.commitActionsState((state) => {
+        if (!state.running.some((run) => run.id === runId)) {
+          return state;
+        }
+        const running = state.running.filter((run) => run.id !== runId);
+        const selectedRunningActionId =
+          state.selectedRunningActionId === runId
+            ? running[running.length - 1]?.id
+            : state.selectedRunningActionId;
+        return {
+          ...state,
+          running,
+          runningRevision: state.runningRevision + 1,
+          selectedRunningActionId,
+        };
+      });
     }
     getSnapshot() {
       return this.snapshot;
@@ -2585,11 +3954,11 @@
       };
     }
     update(snapshot) {
-      this.snapshot = {
+      this.snapshot = this.attachActionsState({
         ...snapshot,
         currentTimeMs: snapshot.currentTimeMs ?? Date.now(),
         ships: snapshot.ships ?? [],
-      };
+      });
       this.notify();
     }
     setTradingStopped(targetPlayerIds, stopped) {
@@ -2684,6 +4053,485 @@
       }
       this.refreshFromGame();
     }
+    createAction() {
+      const existingCount = this.actionsState.actions.length + 1;
+      const action = this.createActionDefinition({
+        name: `New action ${existingCount}`,
+        code:
+          "// Access the game through the `game` helper\n" +
+          "// This function is invoked whenever the action runs\n" +
+          "export function run(context) {\n" +
+          "  context.logger.info('Running action tick', context.game.tick);\n" +
+          "}\n",
+        runMode: "continuous",
+        description: "Describe what this action does.",
+        runIntervalTicks: 1,
+        settings: [],
+      });
+      this.commitActionsState((state) => ({
+        ...state,
+        actions: [...state.actions, action],
+        revision: state.revision + 1,
+        selectedActionId: action.id,
+      }));
+      return action.id;
+    }
+    selectAction(actionId) {
+      if (this.actionsState.selectedActionId === actionId) {
+        return;
+      }
+      this.commitActionsState((state) => {
+        if (state.selectedActionId === actionId) {
+          return state;
+        }
+        return { ...state, selectedActionId: actionId };
+      });
+    }
+    saveAction(actionId, update) {
+      const normalizedSettings = update.settings.map((setting) =>
+        this.sanitizeSetting(setting),
+      );
+      const trimmedName = update.name.trim();
+      const resolvedName = trimmedName === "" ? "Untitled action" : trimmedName;
+      const trimmedDescription = update.description?.trim() ?? "";
+      const interval = Math.max(1, Math.floor(update.runIntervalTicks ?? 1));
+      this.commitActionsState((state) => {
+        const index = state.actions.findIndex(
+          (action) => action.id === actionId,
+        );
+        if (index === -1) {
+          return state;
+        }
+        const current = state.actions[index];
+        const next = {
+          ...current,
+          name: resolvedName,
+          code: update.code,
+          runMode: update.runMode,
+          description: trimmedDescription,
+          runIntervalTicks: interval,
+          settings: normalizedSettings.map((setting) => ({ ...setting })),
+          updatedAtMs: Date.now(),
+        };
+        const actions = [...state.actions];
+        actions[index] = next;
+        return {
+          ...state,
+          actions,
+          revision: state.revision + 1,
+        };
+      });
+    }
+    deleteAction(actionId) {
+      this.commitActionsState((state) => {
+        const index = state.actions.findIndex(
+          (action) => action.id === actionId,
+        );
+        if (index === -1) {
+          return state;
+        }
+        const actions = state.actions.filter(
+          (action) => action.id !== actionId,
+        );
+        let selectedActionId = state.selectedActionId;
+        if (selectedActionId === actionId) {
+          selectedActionId = actions[index]?.id ?? actions[index - 1]?.id;
+        }
+        const removedRuns = state.running.filter(
+          (run) => run.actionId === actionId,
+        );
+        for (const run of removedRuns) {
+          this.clearRunningRemovalTimer(run.id);
+        }
+        const running = removedRuns.length
+          ? state.running.filter((run) => run.actionId !== actionId)
+          : state.running;
+        const runningRevision = removedRuns.length
+          ? state.runningRevision + 1
+          : state.runningRevision;
+        const selectedRunningActionId = running.some(
+          (run) => run.id === state.selectedRunningActionId,
+        )
+          ? state.selectedRunningActionId
+          : running[running.length - 1]?.id;
+        return {
+          ...state,
+          actions,
+          revision: state.revision + 1,
+          running,
+          runningRevision,
+          selectedActionId,
+          selectedRunningActionId,
+        };
+      });
+    }
+    startAction(actionId) {
+      const action = this.actionsState.actions.find(
+        (entry) => entry.id === actionId,
+      );
+      if (!action) {
+        return;
+      }
+      const now = Date.now();
+      const run = {
+        id: this.nextRunningActionId(),
+        actionId: action.id,
+        name: action.name,
+        description: action.description,
+        runMode: action.runMode,
+        runIntervalTicks: action.runIntervalTicks,
+        status: "running",
+        startedAtMs: now,
+        lastUpdatedMs: now,
+        settings: this.cloneSettings(action.settings),
+      };
+      this.commitActionsState((state) => ({
+        ...state,
+        running: [...state.running, run],
+        runningRevision: state.runningRevision + 1,
+        selectedRunningActionId: run.id,
+      }));
+      this.launchAction(action, run.id);
+    }
+    launchAction(action, runId) {
+      const run = this.getRunningActionEntry(runId);
+      if (!run) {
+        return;
+      }
+      if (action.runMode === "once") {
+        const state = {};
+        void this.executeActionScript(action, run, state)
+          .then(() => {
+            this.touchRunningAction(runId);
+            this.finalizeRunningAction(runId, "completed");
+          })
+          .catch((error) => {
+            console.error("Sidebar action failed", action.name, error);
+            this.finalizeRunningAction(runId, "failed");
+          });
+        return;
+      }
+      this.startContinuousRuntime(action, run);
+    }
+    startContinuousRuntime(action, run) {
+      if (typeof window === "undefined") {
+        console.warn(
+          "Continuous sidebar actions are unavailable outside the browser.",
+        );
+        this.finalizeRunningAction(run.id, "failed");
+        return;
+      }
+      const runId = run.id;
+      const runtime = {
+        intervalTicks: Math.max(1, run.runIntervalTicks ?? 1),
+        lastExecutedTick:
+          this.getCurrentGameTick() - Math.max(1, run.runIntervalTicks ?? 1),
+        active: true,
+        state: {},
+        stop: () => {
+          if (!runtime.active) {
+            return;
+          }
+          runtime.active = false;
+          window.clearInterval(intervalHandle);
+        },
+        updateInterval: (ticks) => {
+          const normalized = Math.max(1, Math.floor(Number(ticks) || 1));
+          runtime.intervalTicks = normalized;
+        },
+      };
+      const execute = async () => {
+        if (!runtime.active) {
+          return;
+        }
+        const currentRun = this.getRunningActionEntry(runId);
+        if (!currentRun) {
+          runtime.stop();
+          return;
+        }
+        const currentTick = this.getCurrentGameTick();
+        if (currentTick - runtime.lastExecutedTick < runtime.intervalTicks) {
+          return;
+        }
+        runtime.lastExecutedTick = currentTick;
+        try {
+          await this.executeActionScript(action, currentRun, runtime.state);
+          this.touchRunningAction(runId);
+        } catch (error) {
+          console.error("Sidebar action failed", action.name, error);
+          this.finalizeRunningAction(runId, "failed");
+        }
+      };
+      const intervalHandle = window.setInterval(() => {
+        void execute();
+      }, TICK_MILLISECONDS);
+      this.actionRuntimes.set(runId, runtime);
+      void execute();
+    }
+    selectRunningAction(runId) {
+      this.commitActionsState((state) => {
+        const effectiveId =
+          runId && state.running.some((entry) => entry.id === runId)
+            ? runId
+            : undefined;
+        if (state.selectedRunningActionId === effectiveId) {
+          return state;
+        }
+        return { ...state, selectedRunningActionId: effectiveId };
+      });
+    }
+    stopRunningAction(runId) {
+      const exists = this.actionsState.running.some((run) => run.id === runId);
+      if (!exists) {
+        return;
+      }
+      this.clearRunningRemovalTimer(runId);
+      this.finalizeRunningAction(runId, "stopped");
+    }
+    updateRunningActionSetting(runId, settingId, value) {
+      this.commitActionsState((state) => {
+        const index = state.running.findIndex((run) => run.id === runId);
+        if (index === -1) {
+          return state;
+        }
+        const entry = state.running[index];
+        let changed = false;
+        const settings = entry.settings.map((setting) => {
+          if (setting.id !== settingId) {
+            return setting;
+          }
+          const normalized = this.normalizeSettingValue(setting.type, value);
+          if (setting.value === normalized) {
+            return setting;
+          }
+          changed = true;
+          return { ...setting, value: normalized };
+        });
+        if (!changed) {
+          return state;
+        }
+        const running = [...state.running];
+        running[index] = {
+          ...entry,
+          settings,
+          lastUpdatedMs: Date.now(),
+        };
+        return {
+          ...state,
+          running,
+          runningRevision: state.runningRevision + 1,
+        };
+      });
+    }
+    setRunningActionInterval(runId, ticks) {
+      const normalized = Math.max(1, Math.floor(Number(ticks) || 1));
+      this.commitActionsState((state) => {
+        const index = state.running.findIndex((run) => run.id === runId);
+        if (index === -1) {
+          return state;
+        }
+        const current = state.running[index];
+        if (current.runIntervalTicks === normalized) {
+          return state;
+        }
+        const running = [...state.running];
+        running[index] = {
+          ...current,
+          runIntervalTicks: normalized,
+          lastUpdatedMs: Date.now(),
+        };
+        return {
+          ...state,
+          running,
+          runningRevision: state.runningRevision + 1,
+        };
+      });
+      const runtime = this.actionRuntimes.get(runId);
+      runtime?.updateInterval(normalized);
+    }
+    async executeActionScript(action, run, state) {
+      const context = this.createActionExecutionContext(run, state);
+      const module = { exports: {} };
+      const exports = module.exports;
+      const evaluator = new Function(
+        "game",
+        "settings",
+        "context",
+        "exports",
+        "module",
+        '"use strict";\n' + action.code,
+      );
+      const result = evaluator(
+        context.game,
+        context.settings,
+        context,
+        exports,
+        module,
+      );
+      const runFunction =
+        this.resolveActionRunFunction(module.exports) ??
+        this.resolveActionRunFunction(exports) ??
+        this.resolveActionRunFunction(result);
+      if (runFunction) {
+        const output = runFunction(context);
+        if (output && typeof output.then === "function") {
+          await output;
+        }
+        return;
+      }
+      if (result && typeof result.then === "function") {
+        await result;
+      }
+    }
+    resolveActionRunFunction(candidate) {
+      if (!candidate) {
+        return null;
+      }
+      if (typeof candidate === "function") {
+        return candidate;
+      }
+      if (typeof candidate === "object") {
+        const run = candidate.run;
+        if (typeof run === "function") {
+          return run;
+        }
+        const defaultExport = candidate.default;
+        if (typeof defaultExport === "function") {
+          return defaultExport;
+        }
+      }
+      return null;
+    }
+    createActionExecutionContext(run, state) {
+      const settings = {};
+      for (const setting of run.settings) {
+        const key = setting.key?.trim();
+        if (!key) {
+          continue;
+        }
+        settings[key] = setting.value;
+      }
+      return {
+        game: this.buildActionGameApi(),
+        settings,
+        state,
+        run,
+        snapshot: this.snapshot,
+        logger: console,
+      };
+    }
+    buildActionGameApi() {
+      const players = this.snapshot.players.map((player) => ({
+        id: player.id,
+        name: player.name,
+        isSelf: player.isSelf ?? false,
+        tradeStopped: player.tradeStopped ?? false,
+        tiles: player.tiles,
+        gold: player.gold,
+        troops: player.troops,
+      }));
+      const createHandler = (stopped) => (target) => {
+        const ids = this.normalizeTargetIds(target);
+        if (ids.length === 0) {
+          return;
+        }
+        this.setTradingStopped(ids, stopped);
+      };
+      return {
+        players,
+        tick: this.getCurrentGameTick(),
+        stopTrade: createHandler(true),
+        startTrade: createHandler(false),
+      };
+    }
+    normalizeTargetIds(target) {
+      if (typeof target === "string" || typeof target === "number") {
+        return [String(target)];
+      }
+      const iterable = target;
+      if (!iterable || typeof iterable[Symbol.iterator] !== "function") {
+        return [];
+      }
+      const unique = new Set();
+      for (const entry of iterable) {
+        if (entry === undefined || entry === null) {
+          continue;
+        }
+        unique.add(String(entry));
+      }
+      return [...unique];
+    }
+    getCurrentGameTick() {
+      if (this.game && typeof this.game.ticks === "function") {
+        try {
+          return this.game.ticks();
+        } catch (error) {
+          // Ignore and fall back to a derived tick counter.
+        }
+      }
+      const now = Date.now();
+      const base = this.snapshot.currentTimeMs ?? now;
+      if (!Number.isFinite(base)) {
+        return 0;
+      }
+      return Math.max(0, Math.floor((now - base) / TICK_MILLISECONDS));
+    }
+    touchRunningAction(runId) {
+      this.commitActionsState((state) => {
+        const index = state.running.findIndex((run) => run.id === runId);
+        if (index === -1) {
+          return state;
+        }
+        const current = state.running[index];
+        const next = {
+          ...current,
+          lastUpdatedMs: Date.now(),
+          status: current.status === "running" ? "running" : current.status,
+        };
+        const running = [...state.running];
+        running[index] = next;
+        return {
+          ...state,
+          running,
+          runningRevision: state.runningRevision + 1,
+        };
+      });
+    }
+    finalizeRunningAction(runId, status) {
+      this.clearRunningController(runId);
+      this.clearRunningRemovalTimer(runId);
+      this.commitActionsState((state) => {
+        const index = state.running.findIndex((run) => run.id === runId);
+        if (index === -1) {
+          return state;
+        }
+        const current = state.running[index];
+        const next = {
+          ...current,
+          status,
+          lastUpdatedMs: Date.now(),
+        };
+        const running = [...state.running];
+        running[index] = next;
+        return {
+          ...state,
+          running,
+          runningRevision: state.runningRevision + 1,
+        };
+      });
+      this.scheduleOneShotRemoval(runId);
+    }
+    clearRunningController(runId) {
+      const runtime = this.actionRuntimes.get(runId);
+      if (!runtime) {
+        return;
+      }
+      runtime.stop();
+      this.actionRuntimes.delete(runId);
+    }
+    getRunningActionEntry(runId) {
+      return this.actionsState.running.find((run) => run.id === runId);
+    }
     resolvePlayerPanel() {
       if (typeof document === "undefined") {
         return null;
@@ -2772,12 +4620,12 @@
         const records = players.map((player) =>
           this.createPlayerRecord(player, currentTimeMs, localPlayer),
         );
-        this.snapshot = {
+        this.snapshot = this.attachActionsState({
           players: records,
           allianceDurationMs,
           currentTimeMs,
           ships,
-        };
+        });
         this.notify();
       } catch (error) {
         // If the game context changes while we're reading from it, try attaching again.
