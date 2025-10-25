@@ -27,6 +27,7 @@ const VIEW_OPTIONS: { value: ViewType; label: string }[] = [
   { value: "actionEditor", label: "Action Editor" },
   { value: "runningActions", label: "Running Actions" },
   { value: "runningAction", label: "Running Action" },
+  { value: "logs", label: "Logs" },
 ];
 
 const SIDEBAR_STYLE_ID = "openfront-strategic-sidebar-styles";
@@ -86,6 +87,7 @@ const DEFAULT_SORT_STATES: Record<ViewType, SortState> = {
   actionEditor: { key: "label", direction: "asc" },
   runningActions: { key: "label", direction: "asc" },
   runningAction: { key: "label", direction: "asc" },
+  logs: { key: "label", direction: "asc" },
 };
 
 function createLeaf(view: ViewType): PanelLeafNode {
@@ -105,6 +107,7 @@ function createLeaf(view: ViewType): PanelLeafNode {
       actionEditor: { ...DEFAULT_SORT_STATES.actionEditor },
       runningActions: { ...DEFAULT_SORT_STATES.runningActions },
       runningAction: { ...DEFAULT_SORT_STATES.runningAction },
+      logs: { ...DEFAULT_SORT_STATES.logs },
     },
     scrollTop: 0,
     scrollLeft: 0,
@@ -183,6 +186,9 @@ export class SidebarApp {
       },
       setRunningActionInterval: (runningId, ticks) => {
         this.store.setRunningActionInterval(runningId, ticks);
+      },
+      clearLogs: () => {
+        this.store.clearLogs();
       },
     };
     this.renderLayout();
@@ -615,6 +621,19 @@ export class SidebarApp {
 
     headerControls.appendChild(newActionButton);
 
+    const clearLogsButton = createElement(
+      "button",
+      "flex h-7 w-7 items-center justify-center rounded-md border border-slate-700 bg-slate-900/60 text-slate-100 transition-colors hover:border-rose-500/70 hover:text-rose-200 focus:outline-none focus:ring-2 focus:ring-sky-500/70",
+    );
+    clearLogsButton.type = "button";
+    clearLogsButton.setAttribute("aria-label", "Clear logs");
+    clearLogsButton.appendChild(renderIcon("trash", "h-4 w-4"));
+    clearLogsButton.addEventListener("click", () => {
+      this.store.clearLogs();
+    });
+
+    headerControls.appendChild(clearLogsButton);
+
     select.addEventListener("change", () => {
       leaf.view = select.value as ViewType;
       this.updateLeafHeaderControls(leaf);
@@ -653,6 +672,7 @@ export class SidebarApp {
       body,
       viewSelect: select,
       newActionButton,
+      clearLogsButton,
     } satisfies PanelLeafElements;
     this.updateLeafHeaderControls(leaf);
     this.refreshLeafContent(leaf);
@@ -906,6 +926,27 @@ export class SidebarApp {
     } else {
       element.newActionButton.setAttribute("aria-hidden", "true");
       element.newActionButton.tabIndex = -1;
+    }
+
+    const hasClearLogsAction = typeof this.viewActions.clearLogs === "function";
+    const shouldShowClearLogs = leaf.view === "logs" && hasClearLogsAction;
+    const logCount = this.snapshot.sidebarLogs?.length ?? 0;
+    element.clearLogsButton.style.display = shouldShowClearLogs ? "" : "none";
+    if (shouldShowClearLogs) {
+      element.clearLogsButton.removeAttribute("aria-hidden");
+      element.clearLogsButton.tabIndex = 0;
+      const canClear = logCount > 0;
+      element.clearLogsButton.disabled = !canClear;
+      if (canClear) {
+        element.clearLogsButton.title = "Clear sidebar logs";
+      } else {
+        element.clearLogsButton.title = "No log entries to clear.";
+      }
+    } else {
+      element.clearLogsButton.setAttribute("aria-hidden", "true");
+      element.clearLogsButton.tabIndex = -1;
+      element.clearLogsButton.disabled = false;
+      element.clearLogsButton.removeAttribute("title");
     }
   }
 

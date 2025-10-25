@@ -9,6 +9,7 @@ import {
   SidebarActionSettingType,
   SidebarActionSettingValue,
   SidebarActionsState,
+  SidebarLogEntry,
   SidebarRunningActionStatus,
   SortDirection,
   SortKey,
@@ -54,6 +55,7 @@ export interface ViewActionHandlers {
     value: SidebarActionSettingValue,
   ) => void;
   setRunningActionInterval?: (runId: string, ticks: number) => void;
+  clearLogs?: () => void;
 }
 
 const DEFAULT_ACTIONS: ViewActionHandlers = {
@@ -68,6 +70,7 @@ const DEFAULT_ACTIONS: ViewActionHandlers = {
   stopRunningAction: () => undefined,
   updateRunningActionSetting: () => undefined,
   setRunningActionInterval: () => undefined,
+  clearLogs: () => undefined,
 };
 
 const EMPTY_ACTIONS_STATE: SidebarActionsState = {
@@ -314,6 +317,11 @@ export function buildViewContent(
         lifecycle,
         actions: viewActions,
       });
+    case "logs":
+      return renderLogView({
+        snapshot,
+        existingContainer,
+      });
     default:
       return createElement("div", "text-slate-200 text-sm", "Unsupported view");
   }
@@ -353,6 +361,11 @@ interface ViewRenderOptions {
   existingContainer?: HTMLElement;
   actions: ViewActionHandlers;
   lifecycle?: ViewLifecycleCallbacks;
+}
+
+interface LogViewRenderOptions {
+  snapshot: GameSnapshot;
+  existingContainer?: HTMLElement;
 }
 
 function renderPlayersView(options: ViewRenderOptions): HTMLElement {
@@ -1443,6 +1456,195 @@ function renderRunningActionDetailView(options: {
 
   container.replaceChildren(layout);
   return container;
+}
+
+type LogTableHeader = {
+  key: "timestamp" | "level" | "source" | "message";
+  label: string;
+  align: "left" | "center" | "right";
+};
+
+const LOG_TABLE_HEADERS: ReadonlyArray<LogTableHeader> = [
+  { key: "timestamp", label: "Timestamp", align: "left" },
+  { key: "level", label: "Level", align: "center" },
+  { key: "source", label: "Source", align: "left" },
+  { key: "message", label: "Message", align: "left" },
+];
+
+function renderLogView(options: LogViewRenderOptions): HTMLElement {
+  const { snapshot, existingContainer } = options;
+  const isLogContainer =
+    !!existingContainer && existingContainer.dataset.sidebarRole === "log-view";
+  const containerClass =
+    "relative flex-1 overflow-auto border border-slate-900/70 bg-slate-950/60 backdrop-blur-sm";
+  const container = isLogContainer
+    ? existingContainer
+    : createElement("div", containerClass);
+  container.dataset.sidebarRole = "log-view";
+  container.className = containerClass;
+
+  const tableClass = "min-w-full border-collapse text-xs text-slate-100";
+  let table = container.querySelector("table") as HTMLTableElement | null;
+  if (!table || !isLogContainer) {
+    table = createElement("table", tableClass);
+  } else {
+    table.className = tableClass;
+  }
+
+  const thead = table.tHead ?? createElement("thead", "sticky top-0 z-10");
+  thead.className = "sticky top-0 z-10";
+  thead.replaceChildren();
+  const headerRow = createElement("tr", "bg-slate-900/95");
+  for (const column of LOG_TABLE_HEADERS) {
+    const alignmentClass =
+      column.align === "left"
+        ? "text-left"
+        : column.align === "right"
+          ? "text-right"
+          : "text-center";
+    const th = createElement(
+      "th",
+      `border-b border-r border-slate-800 px-3 py-2 text-[0.65rem] font-semibold uppercase tracking-wide text-slate-300 last:border-r-0 ${alignmentClass}`,
+      column.label,
+    );
+    headerRow.appendChild(th);
+  }
+  thead.appendChild(headerRow);
+
+  const tbody = table.tBodies[0] ?? createElement("tbody", "text-[0.75rem]");
+  tbody.className = "text-[0.75rem]";
+
+  if (!table.contains(thead)) {
+    table.appendChild(thead);
+  }
+  if (!table.contains(tbody)) {
+    table.appendChild(tbody);
+  }
+
+  const logs = snapshot.sidebarLogs ?? [];
+  const revision = snapshot.sidebarLogRevision ?? 0;
+  const previousRevision = Number(container.dataset.logRevision ?? "-1");
+  container.dataset.logRevision = String(revision);
+
+  const wasAtBottom =
+    container.scrollHeight - container.scrollTop - container.clientHeight <= 4;
+
+  if (!isLogContainer || previousRevision !== revision) {
+    tbody.replaceChildren();
+    if (logs.length === 0) {
+      const emptyRow = createElement("tr");
+      const emptyCell = createElement(
+        "td",
+        "px-3 py-8 text-center text-[0.75rem] italic text-slate-500",
+        "No log messages yet.",
+      );
+      emptyCell.colSpan = LOG_TABLE_HEADERS.length;
+      emptyRow.appendChild(emptyCell);
+      tbody.appendChild(emptyRow);
+    } else {
+      for (const entry of logs) {
+        tbody.appendChild(renderLogRow(entry));
+      }
+    }
+  }
+
+  if (
+    container.firstElementChild !== table ||
+    container.childElementCount !== 1
+  ) {
+    container.replaceChildren(table);
+  }
+
+  if (wasAtBottom) {
+    container.scrollTop = container.scrollHeight;
+  }
+
+  return container;
+}
+
+function renderLogRow(entry: SidebarLogEntry): HTMLTableRowElement {
+  const row = createElement(
+    "tr",
+    "border-b border-slate-900/60 last:border-b-0 transition-colors hover:bg-slate-900/40",
+  );
+  row.dataset.sidebarRole = "log-entry";
+  row.dataset.logEntryId = entry.id;
+  row.dataset.logLevel = entry.level;
+  row.dataset.logTimestamp = String(entry.timestampMs);
+  row.style.boxShadow = `inset 0.25rem 0 0 0 ${getLogAccentColor(entry.level)}`;
+
+  const timestampCell = createElement(
+    "td",
+    "px-3 py-2 align-top font-mono text-[0.75rem] text-slate-300 whitespace-nowrap",
+    formatTimestamp(entry.timestampMs),
+  );
+
+  const levelCell = createElement("td", "px-3 py-2 align-top text-center");
+  const levelBadge = createElement(
+    "span",
+    `inline-flex items-center justify-center rounded px-1.5 py-0.5 text-[0.65rem] font-semibold uppercase tracking-wide ${getLogLevelBadgeClass(entry.level)}`,
+    entry.level.toUpperCase(),
+  );
+  levelCell.appendChild(levelBadge);
+
+  const hasSource = !!entry.source && entry.source.trim().length > 0;
+  const sourceCell = createElement(
+    "td",
+    "px-3 py-2 align-top text-[0.75rem] text-slate-400 whitespace-nowrap",
+    hasSource ? entry.source : "–",
+  );
+
+  const messageCell = createElement(
+    "td",
+    `px-3 py-2 align-top font-mono text-[0.75rem] whitespace-pre-wrap break-words ${getLogMessageClass(entry.level)}`,
+    entry.message,
+  );
+
+  row.appendChild(timestampCell);
+  row.appendChild(levelCell);
+  row.appendChild(sourceCell);
+  row.appendChild(messageCell);
+
+  return row;
+}
+
+function getLogLevelBadgeClass(level: SidebarLogEntry["level"]): string {
+  switch (level) {
+    case "error":
+      return "border border-rose-500/40 bg-rose-500/15 text-rose-200";
+    case "warn":
+      return "border border-amber-400/40 bg-amber-400/15 text-amber-200";
+    case "debug":
+      return "border border-slate-600/50 bg-slate-800/70 text-slate-300";
+    default:
+      return "border border-sky-400/40 bg-sky-400/15 text-sky-200";
+  }
+}
+
+function getLogMessageClass(level: SidebarLogEntry["level"]): string {
+  switch (level) {
+    case "error":
+      return "text-rose-200";
+    case "warn":
+      return "text-amber-200";
+    case "debug":
+      return "text-slate-400";
+    default:
+      return "text-slate-200";
+  }
+}
+
+function getLogAccentColor(level: SidebarLogEntry["level"]): string {
+  switch (level) {
+    case "error":
+      return "rgba(248, 113, 113, 0.75)";
+    case "warn":
+      return "rgba(251, 191, 36, 0.75)";
+    case "debug":
+      return "rgba(148, 163, 184, 0.55)";
+    default:
+      return "rgba(56, 189, 248, 0.65)";
+  }
 }
 
 function createActionSettingEditorCard(

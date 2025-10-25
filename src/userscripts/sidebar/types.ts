@@ -7,7 +7,26 @@ export type ViewType =
   | "actions"
   | "actionEditor"
   | "runningActions"
-  | "runningAction";
+  | "runningAction"
+  | "logs";
+
+export type SidebarLogLevel = "debug" | "info" | "warn" | "error";
+
+export interface SidebarLogEntry {
+  id: string;
+  level: SidebarLogLevel;
+  message: string;
+  timestampMs: number;
+  source?: string;
+}
+
+export interface SidebarLogger {
+  log: (...args: unknown[]) => void;
+  info: (...args: unknown[]) => void;
+  warn: (...args: unknown[]) => void;
+  error: (...args: unknown[]) => void;
+  debug: (...args: unknown[]) => void;
+}
 
 export type ShipType = "Transport" | "Trade Ship" | "Warship";
 
@@ -97,6 +116,8 @@ export interface GameSnapshot {
   currentTimeMs: number;
   ships: ShipRecord[];
   sidebarActions?: SidebarActionsState;
+  sidebarLogs?: SidebarLogEntry[];
+  sidebarLogRevision?: number;
 }
 
 export type ActionRunMode = "continuous" | "once";
@@ -229,6 +250,7 @@ export interface PanelLeafElements {
   body: HTMLElement;
   viewSelect: HTMLSelectElement;
   newActionButton: HTMLButtonElement;
+  clearLogsButton: HTMLButtonElement;
 }
 
 export interface PanelGroupElements {
@@ -237,4 +259,5 @@ export interface PanelGroupElements {
 
 export interface SidebarWindowHandle {
   updateData: (snapshot: GameSnapshot) => void;
+  logger: SidebarLogger;
 }
