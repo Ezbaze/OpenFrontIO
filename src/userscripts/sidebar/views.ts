@@ -647,28 +647,6 @@ function renderActionsDirectoryView(options: {
   }
   container.dataset.signature = signature;
 
-  const header = createElement(
-    "div",
-    "flex items-center justify-between gap-2 border-b border-slate-800/70 bg-slate-900/80 px-3 py-2",
-  );
-  header.appendChild(
-    createElement(
-      "div",
-      "text-xs font-semibold uppercase tracking-wide text-slate-300",
-      "Actions",
-    ),
-  );
-  const newButton = createElement(
-    "button",
-    "rounded-md border border-slate-700 bg-slate-900/60 px-3 py-1.5 text-xs font-semibold text-slate-100 transition-colors hover:border-sky-500/70 hover:text-sky-200",
-    "New action",
-  );
-  newButton.type = "button";
-  newButton.addEventListener("click", () => {
-    actions.createAction?.();
-  });
-  header.appendChild(newButton);
-
   const tableWrapper = createElement("div", "flex-1 overflow-auto");
   tableWrapper.dataset.sidebarRole = "table-container";
   const columns = [
@@ -781,7 +759,7 @@ function renderActionsDirectoryView(options: {
 
   table.appendChild(tbody);
   tableWrapper.appendChild(table);
-  container.replaceChildren(header, tableWrapper);
+  container.replaceChildren(tableWrapper);
   return container;
 }
 
@@ -1182,25 +1160,6 @@ function renderRunningActionsView(options: {
   }
   container.dataset.signature = signature;
 
-  const header = createElement(
-    "div",
-    "flex items-center justify-between gap-2 border-b border-slate-800/70 bg-slate-900/80 px-3 py-2",
-  );
-  header.appendChild(
-    createElement(
-      "div",
-      "text-xs font-semibold uppercase tracking-wide text-slate-300",
-      "Running actions",
-    ),
-  );
-  header.appendChild(
-    createElement(
-      "div",
-      "text-[0.7rem] text-slate-400",
-      `${state.running.length} active`,
-    ),
-  );
-
   const tableWrapper = createElement("div", "flex-1 overflow-auto");
   tableWrapper.dataset.sidebarRole = "table-container";
   if (state.running.length === 0) {
@@ -1211,7 +1170,7 @@ function renderRunningActionsView(options: {
         "No actions are currently running.",
       ),
     );
-    container.replaceChildren(header, tableWrapper);
+    container.replaceChildren(tableWrapper);
     return container;
   }
 
@@ -1305,7 +1264,7 @@ function renderRunningActionsView(options: {
   table.appendChild(tbody);
   tableWrapper.replaceChildren(table);
 
-  container.replaceChildren(header, tableWrapper);
+  container.replaceChildren(tableWrapper);
   return container;
 }
 

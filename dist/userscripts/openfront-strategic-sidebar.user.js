@@ -39,6 +39,10 @@
       { tag: "line", attrs: { x1: "18", y1: "6", x2: "6", y2: "18" } },
       { tag: "line", attrs: { x1: "6", y1: "6", x2: "18", y2: "18" } },
     ],
+    plus: [
+      { tag: "line", attrs: { x1: "12", y1: "5", x2: "12", y2: "19" } },
+      { tag: "line", attrs: { x1: "5", y1: "12", x2: "19", y2: "12" } },
+    ],
   };
   const SVG_NS = "http://www.w3.org/2000/svg";
   function renderIcon(kind, className) {
@@ -825,27 +829,6 @@
       return container;
     }
     container.dataset.signature = signature;
-    const header = createElement(
-      "div",
-      "flex items-center justify-between gap-2 border-b border-slate-800/70 bg-slate-900/80 px-3 py-2",
-    );
-    header.appendChild(
-      createElement(
-        "div",
-        "text-xs font-semibold uppercase tracking-wide text-slate-300",
-        "Actions",
-      ),
-    );
-    const newButton = createElement(
-      "button",
-      "rounded-md border border-slate-700 bg-slate-900/60 px-3 py-1.5 text-xs font-semibold text-slate-100 transition-colors hover:border-sky-500/70 hover:text-sky-200",
-      "New action",
-    );
-    newButton.type = "button";
-    newButton.addEventListener("click", () => {
-      actions.createAction?.();
-    });
-    header.appendChild(newButton);
     const tableWrapper = createElement("div", "flex-1 overflow-auto");
     tableWrapper.dataset.sidebarRole = "table-container";
     const columns = [
@@ -951,7 +934,7 @@
     }
     table.appendChild(tbody);
     tableWrapper.appendChild(table);
-    container.replaceChildren(header, tableWrapper);
+    container.replaceChildren(tableWrapper);
     return container;
   }
   function renderActionEditorView(options) {
@@ -1321,24 +1304,6 @@
       return container;
     }
     container.dataset.signature = signature;
-    const header = createElement(
-      "div",
-      "flex items-center justify-between gap-2 border-b border-slate-800/70 bg-slate-900/80 px-3 py-2",
-    );
-    header.appendChild(
-      createElement(
-        "div",
-        "text-xs font-semibold uppercase tracking-wide text-slate-300",
-        "Running actions",
-      ),
-    );
-    header.appendChild(
-      createElement(
-        "div",
-        "text-[0.7rem] text-slate-400",
-        `${state.running.length} active`,
-      ),
-    );
     const tableWrapper = createElement("div", "flex-1 overflow-auto");
     tableWrapper.dataset.sidebarRole = "table-container";
     if (state.running.length === 0) {
@@ -1349,7 +1314,7 @@
           "No actions are currently running.",
         ),
       );
-      container.replaceChildren(header, tableWrapper);
+      container.replaceChildren(tableWrapper);
       return container;
     }
     const table = createElement(
@@ -1440,7 +1405,7 @@
     }
     table.appendChild(tbody);
     tableWrapper.replaceChildren(table);
-    container.replaceChildren(header, tableWrapper);
+    container.replaceChildren(tableWrapper);
     return container;
   }
   function renderRunningActionDetailView(options) {
@@ -3372,9 +3337,10 @@
         "div",
         "flex items-center justify-between gap-2 border-b border-slate-800/70 bg-slate-900/80 px-3 py-2",
       );
+      const headerControls = createElement("div", "flex items-center gap-2");
       const select = createElement(
         "select",
-        "min-w-[8rem] max-w-full shrink-0 rounded-md border border-slate-700 bg-slate-900/80 px-2 py-1 text-xs text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-500/70",
+        "h-7 min-w-[8rem] max-w-full shrink-0 rounded-md border border-slate-700 bg-slate-900/80 px-2 py-1 text-xs text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-500/70",
       );
       for (const option of VIEW_OPTIONS) {
         const opt = document.createElement("option");
@@ -3383,11 +3349,24 @@
         select.appendChild(opt);
       }
       select.value = leaf.view;
+      headerControls.appendChild(select);
+      const newActionButton = createElement(
+        "button",
+        "flex h-7 w-7 items-center justify-center rounded-md border border-slate-700 bg-slate-900/60 text-slate-100 transition-colors hover:border-sky-500/70 hover:text-sky-200 focus:outline-none focus:ring-2 focus:ring-sky-500/70",
+      );
+      newActionButton.type = "button";
+      newActionButton.setAttribute("aria-label", "New action");
+      newActionButton.appendChild(renderIcon("plus", "h-4 w-4"));
+      newActionButton.addEventListener("click", () => {
+        this.store.createAction();
+      });
+      headerControls.appendChild(newActionButton);
       select.addEventListener("change", () => {
         leaf.view = select.value;
+        this.updateLeafHeaderControls(leaf);
         this.refreshLeafContent(leaf);
       });
-      header.appendChild(select);
+      header.appendChild(headerControls);
       const actions = createElement("div", "flex items-center gap-2");
       actions.appendChild(
         this.createActionButton("Split horizontally", "split-horizontal", () =>
@@ -3411,7 +3390,14 @@
       );
       wrapper.appendChild(header);
       wrapper.appendChild(body);
-      leaf.element = { wrapper, header, body };
+      leaf.element = {
+        wrapper,
+        header,
+        body,
+        viewSelect: select,
+        newActionButton,
+      };
+      this.updateLeafHeaderControls(leaf);
       this.refreshLeafContent(leaf);
       return wrapper;
     }
@@ -3610,11 +3596,31 @@
         this.refreshLeafContent(leaf);
       }
     }
+    updateLeafHeaderControls(leaf) {
+      const element = leaf.element;
+      if (!element) {
+        return;
+      }
+      if (element.viewSelect.value !== leaf.view) {
+        element.viewSelect.value = leaf.view;
+      }
+      const shouldShowNewAction =
+        leaf.view === "actions" || leaf.view === "actionEditor";
+      element.newActionButton.style.display = shouldShowNewAction ? "" : "none";
+      if (shouldShowNewAction) {
+        element.newActionButton.removeAttribute("aria-hidden");
+        element.newActionButton.tabIndex = 0;
+      } else {
+        element.newActionButton.setAttribute("aria-hidden", "true");
+        element.newActionButton.tabIndex = -1;
+      }
+    }
     refreshLeafContent(leaf) {
       const element = leaf.element;
       if (!element) {
         return;
       }
+      this.updateLeafHeaderControls(leaf);
       const previousContainer =
         leaf.contentContainer ?? element.body.firstElementChild;
       const previousCleanup = leaf.viewCleanup;
