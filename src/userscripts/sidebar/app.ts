@@ -587,9 +587,11 @@ export class SidebarApp {
       "flex items-center justify-between gap-2 border-b border-slate-800/70 bg-slate-900/80 px-3 py-2",
     );
 
+    const headerControls = createElement("div", "flex items-center gap-2");
+
     const select = createElement(
       "select",
-      "min-w-[8rem] max-w-full shrink-0 rounded-md border border-slate-700 bg-slate-900/80 px-2 py-1 text-xs text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-500/70",
+      "h-7 min-w-[8rem] max-w-full shrink-0 rounded-md border border-slate-700 bg-slate-900/80 px-2 py-1 text-xs text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-500/70",
     );
     for (const option of VIEW_OPTIONS) {
       const opt = document.createElement("option");
@@ -598,11 +600,27 @@ export class SidebarApp {
       select.appendChild(opt);
     }
     select.value = leaf.view;
+    headerControls.appendChild(select);
+
+    const newActionButton = createElement(
+      "button",
+      "flex h-7 w-7 items-center justify-center rounded-md border border-slate-700 bg-slate-900/60 text-slate-100 transition-colors hover:border-sky-500/70 hover:text-sky-200 focus:outline-none focus:ring-2 focus:ring-sky-500/70",
+    );
+    newActionButton.type = "button";
+    newActionButton.setAttribute("aria-label", "New action");
+    newActionButton.appendChild(renderIcon("plus", "h-4 w-4"));
+    newActionButton.addEventListener("click", () => {
+      this.store.createAction();
+    });
+
+    headerControls.appendChild(newActionButton);
+
     select.addEventListener("change", () => {
       leaf.view = select.value as ViewType;
+      this.updateLeafHeaderControls(leaf);
       this.refreshLeafContent(leaf);
     });
-    header.appendChild(select);
+    header.appendChild(headerControls);
 
     const actions = createElement("div", "flex items-center gap-2");
     actions.appendChild(
@@ -629,7 +647,14 @@ export class SidebarApp {
 
     wrapper.appendChild(header);
     wrapper.appendChild(body);
-    leaf.element = { wrapper, header, body } satisfies PanelLeafElements;
+    leaf.element = {
+      wrapper,
+      header,
+      body,
+      viewSelect: select,
+      newActionButton,
+    } satisfies PanelLeafElements;
+    this.updateLeafHeaderControls(leaf);
     this.refreshLeafContent(leaf);
     return wrapper;
   }
@@ -862,11 +887,34 @@ export class SidebarApp {
     }
   }
 
+  private updateLeafHeaderControls(leaf: PanelLeafNode): void {
+    const element = leaf.element;
+    if (!element) {
+      return;
+    }
+
+    if (element.viewSelect.value !== leaf.view) {
+      element.viewSelect.value = leaf.view;
+    }
+
+    const shouldShowNewAction =
+      leaf.view === "actions" || leaf.view === "actionEditor";
+    element.newActionButton.style.display = shouldShowNewAction ? "" : "none";
+    if (shouldShowNewAction) {
+      element.newActionButton.removeAttribute("aria-hidden");
+      element.newActionButton.tabIndex = 0;
+    } else {
+      element.newActionButton.setAttribute("aria-hidden", "true");
+      element.newActionButton.tabIndex = -1;
+    }
+  }
+
   private refreshLeafContent(leaf: PanelLeafNode): void {
     const element = leaf.element;
     if (!element) {
       return;
     }
+    this.updateLeafHeaderControls(leaf);
     const previousContainer =
       leaf.contentContainer ??
       (element.body.firstElementChild as HTMLElement | null);

@@ -227,6 +227,8 @@ export interface PanelLeafElements {
   wrapper: HTMLElement;
   header: HTMLElement;
   body: HTMLElement;
+  viewSelect: HTMLSelectElement;
+  newActionButton: HTMLButtonElement;
 }
 
 export interface PanelGroupElements {
