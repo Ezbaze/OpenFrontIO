@@ -120,6 +120,16 @@ function describeRunMode(mode: ActionRunMode): string {
     : "Keeps running until you stop it manually.";
 }
 
+const SELECTED_ROW_INDICATOR_BOX_SHADOW =
+  "inset 0.25rem 0 0 0 rgba(125, 211, 252, 0.65)";
+
+function applyRowSelectionIndicator(
+  row: HTMLElement,
+  isSelected: boolean,
+): void {
+  row.style.boxShadow = isSelected ? SELECTED_ROW_INDICATOR_BOX_SHADOW : "";
+}
+
 function formatRunStatus(status: SidebarRunningActionStatus): string {
   switch (status) {
     case "running":
@@ -695,9 +705,7 @@ function renderActionsDirectoryView(options: {
         "tr",
         "cursor-pointer transition-colors hover:bg-slate-800/40",
       );
-      if (isSelected) {
-        row.classList.add("bg-slate-800/50", "ring-1", "ring-sky-500/40");
-      }
+      applyRowSelectionIndicator(row, isSelected);
       row.dataset.actionId = action.id;
       row.addEventListener("click", () => {
         actions.selectAction?.(action.id);
@@ -1208,9 +1216,7 @@ function renderRunningActionsView(options: {
       "tr",
       "cursor-pointer transition-colors hover:bg-slate-800/40",
     );
-    if (isSelected) {
-      row.classList.add("bg-slate-800/50", "ring-1", "ring-sky-500/40");
-    }
+    applyRowSelectionIndicator(row, isSelected);
     row.dataset.runningActionId = run.id;
     row.addEventListener("click", () => {
       actions.selectRunningAction?.(run.id);
