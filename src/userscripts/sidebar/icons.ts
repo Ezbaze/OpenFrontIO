@@ -1,4 +1,9 @@
-type IconKind = "split-horizontal" | "split-vertical" | "close" | "plus";
+type IconKind =
+  | "split-horizontal"
+  | "split-vertical"
+  | "close"
+  | "plus"
+  | "trash";
 
 type IconSegment = {
   tag: "rect" | "line" | "path";
@@ -31,6 +36,16 @@ const ICON_DEFINITIONS: Record<IconKind, IconSegment[]> = {
   plus: [
     { tag: "line", attrs: { x1: "12", y1: "5", x2: "12", y2: "19" } },
     { tag: "line", attrs: { x1: "5", y1: "12", x2: "19", y2: "12" } },
+  ],
+  trash: [
+    { tag: "path", attrs: { d: "M3 6h18" } },
+    { tag: "path", attrs: { d: "M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" } },
+    {
+      tag: "path",
+      attrs: { d: "M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" },
+    },
+    { tag: "line", attrs: { x1: "10", y1: "11", x2: "10", y2: "17" } },
+    { tag: "line", attrs: { x1: "14", y1: "11", x2: "14", y2: "17" } },
   ],
 };
 

@@ -1,4 +1,9 @@
 import {
+  createSidebarLogger,
+  sidebarLogger,
+  subscribeToSidebarLogs,
+} from "./logger";
+import {
   AlliancePact,
   GameSnapshot,
   IncomingAttack,
@@ -12,6 +17,8 @@ import {
   SidebarActionSettingType,
   SidebarActionSettingValue,
   SidebarActionsState,
+  SidebarLogEntry,
+  SidebarLogger,
   SidebarRunningAction,
   SidebarRunningActionStatus,
   TileSummary,
@@ -19,6 +26,7 @@ import {
 import { extractClanTag } from "./utils";
 
 const TICK_MILLISECONDS = 100;
+const MAX_LOG_ENTRIES = 500;
 
 type ActionExecutionState = Record<string, unknown>;
 
@@ -45,7 +53,7 @@ interface ActionExecutionContext {
   state: ActionExecutionState;
   run: SidebarRunningAction;
   snapshot: GameSnapshot;
-  logger: Console;
+  logger: SidebarLogger;
 }
 
 interface RunningActionRuntime {
@@ -174,9 +182,16 @@ export class DataStore {
   private readonly actionRuntimes: Map<string, RunningActionRuntime> =
     new Map();
   private pendingTradingRefreshHandle: number | undefined;
+  private sidebarLogs: SidebarLogEntry[] = [];
+  private sidebarLogRevision = 0;
+  private readonly logSubscriptionCleanup: () => void;
 
   constructor(initialSnapshot?: GameSnapshot) {
     this.actionsState = this.createInitialActionsState();
+    if (initialSnapshot?.sidebarLogs?.length) {
+      this.sidebarLogs = [...initialSnapshot.sidebarLogs];
+      this.sidebarLogRevision = initialSnapshot.sidebarLogRevision ?? 0;
+    }
     const baseSnapshot = initialSnapshot ?? {
       players: [],
       allianceDurationMs: 0,
@@ -189,6 +204,17 @@ export class DataStore {
       ships: baseSnapshot.ships ?? [],
     });
 
+    this.logSubscriptionCleanup = subscribeToSidebarLogs((entry) => {
+      this.appendLogEntry(entry);
+    });
+    if (typeof window !== "undefined") {
+      window.addEventListener(
+        "beforeunload",
+        () => this.logSubscriptionCleanup(),
+        { once: true },
+      );
+    }
+
     if (typeof window !== "undefined") {
       this.scheduleGameDiscovery(true);
     }
@@ -198,6 +224,8 @@ export class DataStore {
     return {
       ...snapshot,
       sidebarActions: this.actionsState,
+      sidebarLogs: this.sidebarLogs.slice(),
+      sidebarLogRevision: this.sidebarLogRevision,
     };
   }
 
@@ -376,6 +404,16 @@ export class DataStore {
     };
     const timeout = setTimeout(handler, 1500);
     this.runningRemovalTimers.set(runId, timeout);
+  }
+
+  private appendLogEntry(entry: SidebarLogEntry): void {
+    this.sidebarLogs = [...this.sidebarLogs, entry];
+    if (this.sidebarLogs.length > MAX_LOG_ENTRIES) {
+      this.sidebarLogs = this.sidebarLogs.slice(-MAX_LOG_ENTRIES);
+    }
+    this.sidebarLogRevision += 1;
+    this.snapshot = this.attachActionsState({ ...this.snapshot });
+    this.notify();
   }
 
   private commitActionsState(
@@ -686,6 +724,10 @@ export class DataStore {
       selectedRunningActionId: run.id,
     }));
 
+    sidebarLogger.info(
+      `Started action "${action.name}" [${run.id}] (${action.runMode})`,
+    );
+
     this.launchAction(action, run.id);
   }
 
@@ -703,7 +745,10 @@ export class DataStore {
           this.finalizeRunningAction(runId, "completed");
         })
         .catch((error) => {
-          console.error("Sidebar action failed", action.name, error);
+          sidebarLogger.error(
+            `Action "${action.name}" [${runId}] failed`,
+            error,
+          );
           this.finalizeRunningAction(runId, "failed");
         });
       return;
@@ -717,7 +762,7 @@ export class DataStore {
     run: SidebarRunningAction,
   ): void {
     if (typeof window === "undefined") {
-      console.warn(
+      sidebarLogger.warn(
         "Continuous sidebar actions are unavailable outside the browser.",
       );
       this.finalizeRunningAction(run.id, "failed");
@@ -762,7 +807,7 @@ export class DataStore {
         await this.executeActionScript(action, currentRun, runtime.state);
         this.touchRunningAction(runId);
       } catch (error) {
-        console.error("Sidebar action failed", action.name, error);
+        sidebarLogger.error(`Action "${action.name}" [${runId}] failed`, error);
         this.finalizeRunningAction(runId, "failed");
       }
     };
@@ -865,6 +910,16 @@ export class DataStore {
     runtime?.updateInterval(normalized);
   }
 
+  clearLogs(): void {
+    if (this.sidebarLogs.length === 0) {
+      return;
+    }
+    this.sidebarLogs = [];
+    this.sidebarLogRevision += 1;
+    this.snapshot = this.attachActionsState({ ...this.snapshot });
+    this.notify();
+  }
+
   private async executeActionScript(
     action: SidebarActionDefinition,
     run: SidebarRunningAction,
@@ -940,13 +995,14 @@ export class DataStore {
       }
       settings[key] = setting.value;
     }
+    const logger = createSidebarLogger(`Action ${run.name} [${run.id}]`);
     return {
       game: this.buildActionGameApi(),
       settings,
       state,
       run,
       snapshot: this.snapshot,
-      logger: console,
+      logger,
     } satisfies ActionExecutionContext;
   }
 
@@ -1039,6 +1095,21 @@ export class DataStore {
     runId: string,
     status: SidebarRunningActionStatus,
   ): void {
+    const currentEntry = this.getRunningActionEntry(runId);
+    if (currentEntry) {
+      const label = `Action "${currentEntry.name}" [${runId}]`;
+      switch (status) {
+        case "completed":
+          sidebarLogger.info(`${label} completed.`);
+          break;
+        case "stopped":
+          sidebarLogger.info(`${label} stopped.`);
+          break;
+        case "failed":
+          sidebarLogger.warn(`${label} failed.`);
+          break;
+      }
+    }
     this.clearRunningController(runId);
     this.clearRunningRemovalTimer(runId);
     this.commitActionsState((state) => {

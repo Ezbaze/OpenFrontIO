@@ -43,6 +43,16 @@
       { tag: "line", attrs: { x1: "12", y1: "5", x2: "12", y2: "19" } },
       { tag: "line", attrs: { x1: "5", y1: "12", x2: "19", y2: "12" } },
     ],
+    trash: [
+      { tag: "path", attrs: { d: "M3 6h18" } },
+      { tag: "path", attrs: { d: "M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" } },
+      {
+        tag: "path",
+        attrs: { d: "M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" },
+      },
+      { tag: "line", attrs: { x1: "10", y1: "11", x2: "10", y2: "17" } },
+      { tag: "line", attrs: { x1: "14", y1: "11", x2: "14", y2: "17" } },
+    ],
   };
   const SVG_NS = "http://www.w3.org/2000/svg";
   function renderIcon(kind, className) {
@@ -338,6 +348,7 @@
     stopRunningAction: () => undefined,
     updateRunningActionSetting: () => undefined,
     setRunningActionInterval: () => undefined,
+    clearLogs: () => undefined,
   };
   const EMPTY_ACTIONS_STATE = {
     revision: 0,
@@ -523,6 +534,11 @@
           existingContainer,
           lifecycle,
           actions: viewActions,
+        });
+      case "logs":
+        return renderLogView({
+          snapshot,
+          existingContainer,
         });
       default:
         return createElement(
@@ -1568,6 +1584,169 @@
     layout.appendChild(settingsSection);
     container.replaceChildren(layout);
     return container;
+  }
+  const LOG_TABLE_HEADERS = [
+    { key: "timestamp", label: "Timestamp", align: "left" },
+    { key: "level", label: "Level", align: "center" },
+    { key: "source", label: "Source", align: "left" },
+    { key: "message", label: "Message", align: "left" },
+  ];
+  function renderLogView(options) {
+    const { snapshot, existingContainer } = options;
+    const isLogContainer =
+      !!existingContainer &&
+      existingContainer.dataset.sidebarRole === "log-view";
+    const containerClass =
+      "relative flex-1 overflow-auto border border-slate-900/70 bg-slate-950/60 backdrop-blur-sm";
+    const container = isLogContainer
+      ? existingContainer
+      : createElement("div", containerClass);
+    container.dataset.sidebarRole = "log-view";
+    container.className = containerClass;
+    const tableClass = "min-w-full border-collapse text-xs text-slate-100";
+    let table = container.querySelector("table");
+    if (!table || !isLogContainer) {
+      table = createElement("table", tableClass);
+    } else {
+      table.className = tableClass;
+    }
+    let thead = table.tHead ?? createElement("thead", "sticky top-0 z-10");
+    thead.className = "sticky top-0 z-10";
+    thead.replaceChildren();
+    const headerRow = createElement("tr", "bg-slate-900/95");
+    for (const column of LOG_TABLE_HEADERS) {
+      const alignmentClass =
+        column.align === "left"
+          ? "text-left"
+          : column.align === "right"
+            ? "text-right"
+            : "text-center";
+      const th = createElement(
+        "th",
+        `border-b border-r border-slate-800 px-3 py-2 text-[0.65rem] font-semibold uppercase tracking-wide text-slate-300 last:border-r-0 ${alignmentClass}`,
+        column.label,
+      );
+      headerRow.appendChild(th);
+    }
+    thead.appendChild(headerRow);
+    let tbody = table.tBodies[0] ?? createElement("tbody", "text-[0.75rem]");
+    tbody.className = "text-[0.75rem]";
+    if (!table.contains(thead)) {
+      table.appendChild(thead);
+    }
+    if (!table.contains(tbody)) {
+      table.appendChild(tbody);
+    }
+    const logs = snapshot.sidebarLogs ?? [];
+    const revision = snapshot.sidebarLogRevision ?? 0;
+    const previousRevision = Number(container.dataset.logRevision ?? "-1");
+    container.dataset.logRevision = String(revision);
+    const wasAtBottom =
+      container.scrollHeight - container.scrollTop - container.clientHeight <=
+      4;
+    if (!isLogContainer || previousRevision !== revision) {
+      tbody.replaceChildren();
+      if (logs.length === 0) {
+        const emptyRow = createElement("tr");
+        const emptyCell = createElement(
+          "td",
+          "px-3 py-8 text-center text-[0.75rem] italic text-slate-500",
+          "No log messages yet.",
+        );
+        emptyCell.colSpan = LOG_TABLE_HEADERS.length;
+        emptyRow.appendChild(emptyCell);
+        tbody.appendChild(emptyRow);
+      } else {
+        for (const entry of logs) {
+          tbody.appendChild(renderLogRow(entry));
+        }
+      }
+    }
+    if (
+      container.firstElementChild !== table ||
+      container.childElementCount !== 1
+    ) {
+      container.replaceChildren(table);
+    }
+    if (wasAtBottom) {
+      container.scrollTop = container.scrollHeight;
+    }
+    return container;
+  }
+  function renderLogRow(entry) {
+    const row = createElement(
+      "tr",
+      "border-b border-slate-900/60 last:border-b-0 transition-colors hover:bg-slate-900/40",
+    );
+    row.dataset.sidebarRole = "log-entry";
+    row.dataset.logEntryId = entry.id;
+    row.dataset.logLevel = entry.level;
+    row.dataset.logTimestamp = String(entry.timestampMs);
+    row.style.boxShadow = `inset 0.25rem 0 0 0 ${getLogAccentColor(entry.level)}`;
+    const timestampCell = createElement(
+      "td",
+      "px-3 py-2 align-top font-mono text-[0.75rem] text-slate-300 whitespace-nowrap",
+      formatTimestamp(entry.timestampMs),
+    );
+    const levelCell = createElement("td", "px-3 py-2 align-top text-center");
+    const levelBadge = createElement(
+      "span",
+      `inline-flex items-center justify-center rounded px-1.5 py-0.5 text-[0.65rem] font-semibold uppercase tracking-wide ${getLogLevelBadgeClass(entry.level)}`,
+      entry.level.toUpperCase(),
+    );
+    levelCell.appendChild(levelBadge);
+    const hasSource = !!entry.source && entry.source.trim().length > 0;
+    const sourceCell = createElement(
+      "td",
+      "px-3 py-2 align-top text-[0.75rem] text-slate-400 whitespace-nowrap",
+      hasSource ? entry.source : "–",
+    );
+    const messageCell = createElement(
+      "td",
+      `px-3 py-2 align-top font-mono text-[0.75rem] whitespace-pre-wrap break-words ${getLogMessageClass(entry.level)}`,
+      entry.message,
+    );
+    row.appendChild(timestampCell);
+    row.appendChild(levelCell);
+    row.appendChild(sourceCell);
+    row.appendChild(messageCell);
+    return row;
+  }
+  function getLogLevelBadgeClass(level) {
+    switch (level) {
+      case "error":
+        return "border border-rose-500/40 bg-rose-500/15 text-rose-200";
+      case "warn":
+        return "border border-amber-400/40 bg-amber-400/15 text-amber-200";
+      case "debug":
+        return "border border-slate-600/50 bg-slate-800/70 text-slate-300";
+      default:
+        return "border border-sky-400/40 bg-sky-400/15 text-sky-200";
+    }
+  }
+  function getLogMessageClass(level) {
+    switch (level) {
+      case "error":
+        return "text-rose-200";
+      case "warn":
+        return "text-amber-200";
+      case "debug":
+        return "text-slate-400";
+      default:
+        return "text-slate-200";
+    }
+  }
+  function getLogAccentColor(level) {
+    switch (level) {
+      case "error":
+        return "rgba(248, 113, 113, 0.75)";
+      case "warn":
+        return "rgba(251, 191, 36, 0.75)";
+      case "debug":
+        return "rgba(148, 163, 184, 0.55)";
+      default:
+        return "rgba(56, 189, 248, 0.65)";
+    }
   }
   function createActionSettingEditorCard(formState, setting, onRemove) {
     const card = createElement(
@@ -2859,6 +3038,7 @@
     { value: "actionEditor", label: "Action Editor" },
     { value: "runningActions", label: "Running Actions" },
     { value: "runningAction", label: "Running Action" },
+    { value: "logs", label: "Logs" },
   ];
   const SIDEBAR_STYLE_ID = "openfront-strategic-sidebar-styles";
   function ensureSidebarStyles() {
@@ -2902,6 +3082,7 @@
     actionEditor: { key: "label", direction: "asc" },
     runningActions: { key: "label", direction: "asc" },
     runningAction: { key: "label", direction: "asc" },
+    logs: { key: "label", direction: "asc" },
   };
   function createLeaf(view) {
     return {
@@ -2920,6 +3101,7 @@
         actionEditor: { ...DEFAULT_SORT_STATES.actionEditor },
         runningActions: { ...DEFAULT_SORT_STATES.runningActions },
         runningAction: { ...DEFAULT_SORT_STATES.runningAction },
+        logs: { ...DEFAULT_SORT_STATES.logs },
       },
       scrollTop: 0,
       scrollLeft: 0,
@@ -2980,6 +3162,9 @@
         },
         setRunningActionInterval: (runningId, ticks) => {
           this.store.setRunningActionInterval(runningId, ticks);
+        },
+        clearLogs: () => {
+          this.store.clearLogs();
         },
       };
       this.renderLayout();
@@ -3362,6 +3547,17 @@
         this.store.createAction();
       });
       headerControls.appendChild(newActionButton);
+      const clearLogsButton = createElement(
+        "button",
+        "flex h-7 w-7 items-center justify-center rounded-md border border-slate-700 bg-slate-900/60 text-slate-100 transition-colors hover:border-rose-500/70 hover:text-rose-200 focus:outline-none focus:ring-2 focus:ring-sky-500/70",
+      );
+      clearLogsButton.type = "button";
+      clearLogsButton.setAttribute("aria-label", "Clear logs");
+      clearLogsButton.appendChild(renderIcon("trash", "h-4 w-4"));
+      clearLogsButton.addEventListener("click", () => {
+        this.store.clearLogs();
+      });
+      headerControls.appendChild(clearLogsButton);
       select.addEventListener("change", () => {
         leaf.view = select.value;
         this.updateLeafHeaderControls(leaf);
@@ -3397,6 +3593,7 @@
         body,
         viewSelect: select,
         newActionButton,
+        clearLogsButton,
       };
       this.updateLeafHeaderControls(leaf);
       this.refreshLeafContent(leaf);
@@ -3615,6 +3812,27 @@
         element.newActionButton.setAttribute("aria-hidden", "true");
         element.newActionButton.tabIndex = -1;
       }
+      const hasClearLogsAction =
+        typeof this.viewActions.clearLogs === "function";
+      const shouldShowClearLogs = leaf.view === "logs" && hasClearLogsAction;
+      const logCount = this.snapshot.sidebarLogs?.length ?? 0;
+      element.clearLogsButton.style.display = shouldShowClearLogs ? "" : "none";
+      if (shouldShowClearLogs) {
+        element.clearLogsButton.removeAttribute("aria-hidden");
+        element.clearLogsButton.tabIndex = 0;
+        const canClear = logCount > 0;
+        element.clearLogsButton.disabled = !canClear;
+        if (canClear) {
+          element.clearLogsButton.title = "Clear sidebar logs";
+        } else {
+          element.clearLogsButton.title = "No log entries to clear.";
+        }
+      } else {
+        element.clearLogsButton.setAttribute("aria-hidden", "true");
+        element.clearLogsButton.tabIndex = -1;
+        element.clearLogsButton.disabled = false;
+        element.clearLogsButton.removeAttribute("title");
+      }
     }
     refreshLeafContent(leaf) {
       const element = leaf.element;
@@ -3751,7 +3969,74 @@
     }
   }
 
+  const listeners = new Set();
+  let logEntryCounter = 0;
+  function formatLogArg(arg) {
+    if (typeof arg === "string") {
+      return arg;
+    }
+    if (
+      typeof arg === "number" ||
+      typeof arg === "boolean" ||
+      arg === null ||
+      arg === undefined
+    ) {
+      return String(arg);
+    }
+    if (arg instanceof Error) {
+      return arg.stack ?? `${arg.name}: ${arg.message}`;
+    }
+    try {
+      return JSON.stringify(arg);
+    } catch (error) {
+      return String(arg);
+    }
+  }
+  function emitLogEntry(level, args, source) {
+    const message = args.map((arg) => formatLogArg(arg)).join(" ");
+    const entry = {
+      id: `log-${++logEntryCounter}`,
+      level,
+      message,
+      timestampMs: Date.now(),
+      source,
+    };
+    for (const listener of listeners) {
+      listener(entry);
+    }
+    return entry;
+  }
+  function callConsole(method, args) {
+    const fn = console[method];
+    if (typeof fn === "function") {
+      fn.apply(console, args);
+      return;
+    }
+    console.log(...args);
+  }
+  function logWithConsole(method, level, source, args) {
+    callConsole(method, args);
+    emitLogEntry(level, args, source);
+  }
+  function createSidebarLogger(source) {
+    return {
+      log: (...args) => logWithConsole("log", "info", source, args),
+      info: (...args) => logWithConsole("info", "info", source, args),
+      warn: (...args) => logWithConsole("warn", "warn", source, args),
+      error: (...args) => logWithConsole("error", "error", source, args),
+      debug: (...args) => logWithConsole("debug", "debug", source, args),
+    };
+  }
+  const sidebarLogger = createSidebarLogger("Sidebar");
+  function subscribeToSidebarLogs(listener) {
+    listeners.add(listener);
+    return () => {
+      listeners.delete(listener);
+    };
+  }
+
   const TICK_MILLISECONDS = 100;
+  const MAX_LOG_ENTRIES = 500;
   class DataStore {
     constructor(initialSnapshot) {
       this.listeners = new Set();
@@ -3766,7 +4051,13 @@
       this.settingIdCounter = 0;
       this.runningRemovalTimers = new Map();
       this.actionRuntimes = new Map();
+      this.sidebarLogs = [];
+      this.sidebarLogRevision = 0;
       this.actionsState = this.createInitialActionsState();
+      if (initialSnapshot?.sidebarLogs?.length) {
+        this.sidebarLogs = [...initialSnapshot.sidebarLogs];
+        this.sidebarLogRevision = initialSnapshot.sidebarLogRevision ?? 0;
+      }
       const baseSnapshot = initialSnapshot ?? {
         players: [],
         allianceDurationMs: 0,
@@ -3778,6 +4069,16 @@
         currentTimeMs: baseSnapshot.currentTimeMs ?? Date.now(),
         ships: baseSnapshot.ships ?? [],
       });
+      this.logSubscriptionCleanup = subscribeToSidebarLogs((entry) => {
+        this.appendLogEntry(entry);
+      });
+      if (typeof window !== "undefined") {
+        window.addEventListener(
+          "beforeunload",
+          () => this.logSubscriptionCleanup(),
+          { once: true },
+        );
+      }
       if (typeof window !== "undefined") {
         this.scheduleGameDiscovery(true);
       }
@@ -3786,6 +4087,8 @@
       return {
         ...snapshot,
         sidebarActions: this.actionsState,
+        sidebarLogs: this.sidebarLogs.slice(),
+        sidebarLogRevision: this.sidebarLogRevision,
       };
     }
     createInitialActionsState() {
@@ -3933,6 +4236,15 @@
       };
       const timeout = setTimeout(handler, 1500);
       this.runningRemovalTimers.set(runId, timeout);
+    }
+    appendLogEntry(entry) {
+      this.sidebarLogs = [...this.sidebarLogs, entry];
+      if (this.sidebarLogs.length > MAX_LOG_ENTRIES) {
+        this.sidebarLogs = this.sidebarLogs.slice(-MAX_LOG_ENTRIES);
+      }
+      this.sidebarLogRevision += 1;
+      this.snapshot = this.attachActionsState({ ...this.snapshot });
+      this.notify();
     }
     commitActionsState(updater) {
       this.actionsState = updater(this.actionsState);
@@ -4220,6 +4532,9 @@
         runningRevision: state.runningRevision + 1,
         selectedRunningActionId: run.id,
       }));
+      sidebarLogger.info(
+        `Started action "${action.name}" [${run.id}] (${action.runMode})`,
+      );
       this.launchAction(action, run.id);
     }
     launchAction(action, runId) {
@@ -4235,7 +4550,10 @@
             this.finalizeRunningAction(runId, "completed");
           })
           .catch((error) => {
-            console.error("Sidebar action failed", action.name, error);
+            sidebarLogger.error(
+              `Action "${action.name}" [${runId}] failed`,
+              error,
+            );
             this.finalizeRunningAction(runId, "failed");
           });
         return;
@@ -4244,7 +4562,7 @@
     }
     startContinuousRuntime(action, run) {
       if (typeof window === "undefined") {
-        console.warn(
+        sidebarLogger.warn(
           "Continuous sidebar actions are unavailable outside the browser.",
         );
         this.finalizeRunningAction(run.id, "failed");
@@ -4287,7 +4605,10 @@
           await this.executeActionScript(action, currentRun, runtime.state);
           this.touchRunningAction(runId);
         } catch (error) {
-          console.error("Sidebar action failed", action.name, error);
+          sidebarLogger.error(
+            `Action "${action.name}" [${runId}] failed`,
+            error,
+          );
           this.finalizeRunningAction(runId, "failed");
         }
       };
@@ -4378,6 +4699,15 @@
       const runtime = this.actionRuntimes.get(runId);
       runtime?.updateInterval(normalized);
     }
+    clearLogs() {
+      if (this.sidebarLogs.length === 0) {
+        return;
+      }
+      this.sidebarLogs = [];
+      this.sidebarLogRevision += 1;
+      this.snapshot = this.attachActionsState({ ...this.snapshot });
+      this.notify();
+    }
     async executeActionScript(action, run, state) {
       const context = this.createActionExecutionContext(run, state);
       const module = { exports: {} };
@@ -4440,13 +4770,14 @@
         }
         settings[key] = setting.value;
       }
+      const logger = createSidebarLogger(`Action ${run.name} [${run.id}]`);
       return {
         game: this.buildActionGameApi(),
         settings,
         state,
         run,
         snapshot: this.snapshot,
-        logger: console,
+        logger,
       };
     }
     buildActionGameApi() {
@@ -4527,6 +4858,21 @@
       });
     }
     finalizeRunningAction(runId, status) {
+      const currentEntry = this.getRunningActionEntry(runId);
+      if (currentEntry) {
+        const label = `Action "${currentEntry.name}" [${runId}]`;
+        switch (status) {
+          case "completed":
+            sidebarLogger.info(`${label} completed.`);
+            break;
+          case "stopped":
+            sidebarLogger.info(`${label} stopped.`);
+            break;
+          case "failed":
+            sidebarLogger.warn(`${label} failed.`);
+            break;
+        }
+      }
       this.clearRunningController(runId);
       this.clearRunningRemovalTimer(runId);
       this.commitActionsState((state) => {
@@ -5263,6 +5609,7 @@
     new SidebarApp(store);
     window.openFrontStrategicSidebar = {
       updateData: (snapshot) => store.update(snapshot),
+      logger: sidebarLogger,
     };
   }
   if (document.readyState === "loading") {

@@ -1,5 +1,6 @@
 import { SidebarApp } from "./app";
 import { DataStore } from "./data";
+import { sidebarLogger } from "./logger";
 import { SidebarWindowHandle } from "./types";
 
 declare global {
@@ -46,6 +47,7 @@ async function initializeSidebar(): Promise<void> {
   new SidebarApp(store);
   window.openFrontStrategicSidebar = {
     updateData: (snapshot) => store.update(snapshot),
+    logger: sidebarLogger,
   };
 }
 
