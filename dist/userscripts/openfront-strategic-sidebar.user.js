@@ -361,6 +361,11 @@
       ? "Runs a single time and removes itself from the running list."
       : "Keeps running until you stop it manually.";
   }
+  const SELECTED_ROW_INDICATOR_BOX_SHADOW =
+    "inset 0.25rem 0 0 0 rgba(125, 211, 252, 0.65)";
+  function applyRowSelectionIndicator(row, isSelected) {
+    row.style.boxShadow = isSelected ? SELECTED_ROW_INDICATOR_BOX_SHADOW : "";
+  }
   function formatRunStatus(status) {
     switch (status) {
       case "running":
@@ -875,9 +880,7 @@
           "tr",
           "cursor-pointer transition-colors hover:bg-slate-800/40",
         );
-        if (isSelected) {
-          row.classList.add("bg-slate-800/50", "ring-1", "ring-sky-500/40");
-        }
+        applyRowSelectionIndicator(row, isSelected);
         row.dataset.actionId = action.id;
         row.addEventListener("click", () => {
           actions.selectAction?.(action.id);
@@ -1350,9 +1353,7 @@
         "tr",
         "cursor-pointer transition-colors hover:bg-slate-800/40",
       );
-      if (isSelected) {
-        row.classList.add("bg-slate-800/50", "ring-1", "ring-sky-500/40");
-      }
+      applyRowSelectionIndicator(row, isSelected);
       row.dataset.runningActionId = run.id;
       row.addEventListener("click", () => {
         actions.selectRunningAction?.(run.id);
