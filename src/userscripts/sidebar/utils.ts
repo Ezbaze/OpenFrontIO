@@ -1,5 +1,7 @@
 import type { TileSummary } from "./types";
 
+const CLAN_TAG_PATTERN = /^\[([a-zA-Z]{2,5})\]/;
+
 const numberFormatter = new Intl.NumberFormat("en-US");
 
 function normalizeTroopCount(value: number): number {
@@ -40,6 +42,15 @@ export function formatTimestamp(ms: number): string {
     minute: "2-digit",
     second: "2-digit",
   });
+}
+
+export function extractClanTag(name: string): string | undefined {
+  if (!name.startsWith("[")) {
+    return undefined;
+  }
+
+  const match = name.match(CLAN_TAG_PATTERN);
+  return match ? match[1] : undefined;
 }
 
 export function clamp(value: number, min: number, max: number): number {
