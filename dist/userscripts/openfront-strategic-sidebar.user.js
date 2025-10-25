@@ -64,6 +64,7 @@
     return svg;
   }
 
+  const CLAN_TAG_PATTERN = /^\[([a-zA-Z]{2,5})\]/;
   const numberFormatter = new Intl.NumberFormat("en-US");
   function normalizeTroopCount(value) {
     if (!Number.isFinite(value)) {
@@ -99,6 +100,13 @@
       minute: "2-digit",
       second: "2-digit",
     });
+  }
+  function extractClanTag(name) {
+    if (!name.startsWith("[")) {
+      return undefined;
+    }
+    const match = name.match(CLAN_TAG_PATTERN);
+    return match ? match[1] : undefined;
   }
   function clamp(value, min, max) {
     return Math.max(min, Math.min(max, value));
@@ -2869,10 +2877,6 @@
       return expiresAt > snapshot.currentTimeMs;
     });
   }
-  function extractClanTag(name) {
-    const match = name.match(/\[(.+?)\]/);
-    return match ? match[1].trim() : "Unaffiliated";
-  }
 
   const VIEW_OPTIONS = [
     { value: "players", label: "Players" },
@@ -4953,7 +4957,7 @@
     createPlayerRecord(player, currentTimeMs, localPlayer) {
       const playerId = String(player.id());
       const name = player.displayName();
-      const clan = this.extractClanFromName(name);
+      const clan = extractClanTag(name);
       const incomingRaw = player
         .incomingAttacks()
         .filter((attack) => !attack.retreating);
@@ -5062,13 +5066,6 @@
         console.warn("Failed to resolve player by id", id, error);
         return undefined;
       }
-    }
-    extractClanFromName(name) {
-      if (!name.startsWith("[") || !name.includes("]")) {
-        return undefined;
-      }
-      const match = name.match(/^\[([a-zA-Z]{2,5})\]/);
-      return match ? match[1] : undefined;
     }
     getTraitorTargets(playerId) {
       if (!this.traitorHistory.has(playerId)) {

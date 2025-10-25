@@ -16,6 +16,7 @@ import {
   SidebarRunningActionStatus,
   TileSummary,
 } from "./types";
+import { extractClanTag } from "./utils";
 
 const TICK_MILLISECONDS = 100;
 
@@ -1556,7 +1557,7 @@ export class DataStore {
   ): PlayerRecord {
     const playerId = String(player.id());
     const name = player.displayName();
-    const clan = this.extractClanFromName(name);
+    const clan = extractClanTag(name);
 
     const incomingRaw = player
       .incomingAttacks()
@@ -1677,15 +1678,6 @@ export class DataStore {
       console.warn("Failed to resolve player by id", id, error);
       return undefined;
     }
-  }
-
-  private extractClanFromName(name: string): string | undefined {
-    if (!name.startsWith("[") || !name.includes("]")) {
-      return undefined;
-    }
-
-    const match = name.match(/^\[([a-zA-Z]{2,5})\]/);
-    return match ? match[1] : undefined;
   }
 
   private getTraitorTargets(playerId: string): Set<string> {

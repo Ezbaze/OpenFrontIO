@@ -18,6 +18,7 @@ import {
 } from "./types";
 import {
   createElement,
+  extractClanTag,
   focusTile,
   formatCountdown,
   formatNumber,
@@ -2881,7 +2882,7 @@ function groupPlayers(options: {
   players: PlayerRecord[];
   snapshot: GameSnapshot;
   metricsCache: Map<string, Metrics>;
-  getKey: (player: PlayerRecord) => string;
+  getKey: (player: PlayerRecord) => string | undefined;
   sortState: SortState;
 }): AggregatedRow[] {
   const { players, snapshot, metricsCache, getKey, sortState } = options;
@@ -2977,9 +2978,4 @@ function getActiveAlliances(player: PlayerRecord, snapshot: GameSnapshot) {
     const expiresAt = pact.startedAtMs + snapshot.allianceDurationMs;
     return expiresAt > snapshot.currentTimeMs;
   });
-}
-
-function extractClanTag(name: string): string {
-  const match = name.match(/\[(.+?)\]/);
-  return match ? match[1].trim() : "Unaffiliated";
 }
