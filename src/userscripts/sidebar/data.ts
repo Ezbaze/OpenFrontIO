@@ -172,6 +172,7 @@ export class DataStore {
   > = new Map();
   private readonly actionRuntimes: Map<string, RunningActionRuntime> =
     new Map();
+  private pendingTradingRefreshHandle: number | undefined;
 
   constructor(initialSnapshot?: GameSnapshot) {
     this.actionsState = this.createInitialActionsState();
@@ -479,7 +480,7 @@ export class DataStore {
           );
         }
       }
-      this.refreshFromGame();
+      this.scheduleTradingRefresh();
       return;
     }
 
@@ -523,7 +524,23 @@ export class DataStore {
       }
     }
 
-    this.refreshFromGame();
+    this.scheduleTradingRefresh();
+  }
+
+  private scheduleTradingRefresh(): void {
+    if (typeof window === "undefined") {
+      this.refreshFromGame();
+      return;
+    }
+
+    if (this.pendingTradingRefreshHandle !== undefined) {
+      return;
+    }
+
+    this.pendingTradingRefreshHandle = window.setTimeout(() => {
+      this.pendingTradingRefreshHandle = undefined;
+      this.refreshFromGame();
+    }, 0);
   }
 
   createAction(): string {

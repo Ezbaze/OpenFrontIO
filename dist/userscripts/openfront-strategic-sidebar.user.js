@@ -4009,7 +4009,7 @@
             );
           }
         }
-        this.refreshFromGame();
+        this.scheduleTradingRefresh();
         return;
       }
       if (stopped) {
@@ -4051,7 +4051,20 @@
           }
         }
       }
-      this.refreshFromGame();
+      this.scheduleTradingRefresh();
+    }
+    scheduleTradingRefresh() {
+      if (typeof window === "undefined") {
+        this.refreshFromGame();
+        return;
+      }
+      if (this.pendingTradingRefreshHandle !== undefined) {
+        return;
+      }
+      this.pendingTradingRefreshHandle = window.setTimeout(() => {
+        this.pendingTradingRefreshHandle = undefined;
+        this.refreshFromGame();
+      }, 0);
     }
     createAction() {
       const existingCount = this.actionsState.actions.length + 1;
