@@ -848,36 +848,37 @@
     header.appendChild(newButton);
     const tableWrapper = createElement("div", "flex-1 overflow-auto");
     tableWrapper.dataset.sidebarRole = "table-container";
-    const table = createElement(
-      "table",
-      "min-w-full divide-y divide-slate-800 text-xs text-slate-100",
-    );
-    const thead = createElement(
-      "thead",
-      "bg-slate-900/85 text-[0.65rem] uppercase tracking-wide text-slate-300",
-    );
-    const headerRow = createElement("tr");
     const columns = [
       { key: "name", label: "Action", align: "left" },
       { key: "controls", label: "", align: "right" },
     ];
+    const table = createElement(
+      "table",
+      "min-w-full border-collapse text-xs text-slate-100",
+    );
+    const thead = createElement("thead", "sticky top-0 z-10");
+    const headerRow = createElement("tr", "bg-slate-900/95");
     for (const column of columns) {
+      const alignClass = column.align === "right" ? "text-right" : "text-left";
       const th = createElement(
         "th",
-        `px-3 py-2 font-semibold ${column.align === "right" ? "text-right" : "text-left"}`,
+        `border-b border-r border-slate-800 px-3 py-2 text-[0.65rem] font-semibold uppercase tracking-wide text-slate-300 last:border-r-0 ${alignClass}`,
+        column.label,
       );
-      th.textContent = column.label;
+      th.classList.add("bg-slate-900/90");
       headerRow.appendChild(th);
     }
     thead.appendChild(headerRow);
     table.appendChild(thead);
-    const tbody = createElement("tbody", "divide-y divide-slate-900/80");
+    const tbody = createElement("tbody", "text-[0.75rem]");
     const runningLookup = new Set(state.running.map((run) => run.actionId));
+    const cellBaseClass =
+      "border-b border-r border-slate-800 border-slate-900/80 px-3 py-2 align-top last:border-r-0";
     if (state.actions.length === 0) {
-      const row = createElement("tr");
+      const row = createElement("tr", "hover:bg-transparent");
       const cell = createElement(
         "td",
-        "px-4 py-6 text-center text-xs text-slate-400",
+        `${cellBaseClass} text-center text-slate-400`,
         "No actions yet. Create a new action to get started.",
       );
       cell.colSpan = columns.length;
@@ -889,22 +890,25 @@
         const isRunning = runningLookup.has(action.id);
         const row = createElement(
           "tr",
-          `cursor-pointer transition-colors ${
-            isSelected
-              ? "bg-slate-800/50 ring-1 ring-sky-500/40"
-              : "hover:bg-slate-800/30"
-          }`,
+          "cursor-pointer transition-colors hover:bg-slate-800/40",
         );
+        if (isSelected) {
+          row.classList.add("bg-slate-800/50", "ring-1", "ring-sky-500/40");
+        }
         row.dataset.actionId = action.id;
         row.addEventListener("click", () => {
           actions.selectAction?.(action.id);
         });
-        const nameCell = createElement("td", "px-3 py-3 align-top");
+        const nameCell = createElement("td", `${cellBaseClass} text-left`);
         const nameLine = createElement(
           "div",
-          "flex flex-wrap items-center gap-2 text-sm font-semibold text-slate-100",
-          action.name,
+          "flex flex-wrap items-center gap-2",
         );
+        const nameLabel = createPlayerNameElement(action.name, undefined, {
+          className:
+            "font-semibold text-slate-100 transition-colors hover:text-sky-200",
+        });
+        nameLine.appendChild(nameLabel);
         if (isRunning) {
           nameLine.appendChild(
             createElement(
@@ -916,10 +920,7 @@
         }
         nameCell.appendChild(nameLine);
         row.appendChild(nameCell);
-        const controlsCell = createElement(
-          "td",
-          "px-3 py-3 align-top text-right",
-        );
+        const controlsCell = createElement("td", `${cellBaseClass} text-right`);
         const controls = createElement("div", "flex justify-end gap-2");
         const runButton = createElement(
           "button",
@@ -1353,13 +1354,10 @@
     }
     const table = createElement(
       "table",
-      "min-w-full divide-y divide-slate-800 text-xs text-slate-100",
+      "min-w-full border-collapse text-xs text-slate-100",
     );
-    const thead = createElement(
-      "thead",
-      "bg-slate-900/85 text-[0.65rem] uppercase tracking-wide text-slate-300",
-    );
-    const headerRow = createElement("tr");
+    const thead = createElement("thead", "sticky top-0 z-10");
+    const headerRow = createElement("tr", "bg-slate-900/95");
     const columns = [
       { key: "name", label: "Action", align: "left" },
       { key: "mode", label: "Mode", align: "left" },
@@ -1367,54 +1365,61 @@
       { key: "controls", label: "", align: "right" },
     ];
     for (const column of columns) {
+      const alignClass = column.align === "right" ? "text-right" : "text-left";
       const th = createElement(
         "th",
-        `px-3 py-2 font-semibold ${column.align === "right" ? "text-right" : "text-left"}`,
+        `border-b border-r border-slate-800 px-3 py-2 text-[0.65rem] font-semibold uppercase tracking-wide text-slate-300 last:border-r-0 ${alignClass}`,
+        column.label,
       );
-      th.textContent = column.label;
+      th.classList.add("bg-slate-900/90");
       headerRow.appendChild(th);
     }
     thead.appendChild(headerRow);
     table.appendChild(thead);
-    const tbody = createElement("tbody", "divide-y divide-slate-900/80");
+    const tbody = createElement("tbody", "text-[0.75rem]");
+    const cellBaseClass =
+      "border-b border-r border-slate-800 border-slate-900/80 px-3 py-2 align-top last:border-r-0";
     for (const run of state.running) {
       const isSelected = state.selectedRunningActionId === run.id;
       const row = createElement(
         "tr",
-        `cursor-pointer transition-colors ${
-          isSelected
-            ? "bg-slate-800/50 ring-1 ring-sky-500/40"
-            : "hover:bg-slate-800/30"
-        }`,
+        "cursor-pointer transition-colors hover:bg-slate-800/40",
       );
+      if (isSelected) {
+        row.classList.add("bg-slate-800/50", "ring-1", "ring-sky-500/40");
+      }
       row.dataset.runningActionId = run.id;
       row.addEventListener("click", () => {
         actions.selectRunningAction?.(run.id);
       });
-      const nameCell = createElement("td", "px-3 py-3 align-top");
+      const nameCell = createElement("td", `${cellBaseClass} text-left`);
       const nameLine = createElement(
         "div",
-        "flex flex-wrap items-center gap-2 text-sm font-semibold text-slate-100",
-        run.name,
+        "flex flex-wrap items-center gap-2",
       );
+      const nameLabel = createPlayerNameElement(run.name, undefined, {
+        className:
+          "font-semibold text-slate-100 transition-colors hover:text-sky-200",
+      });
+      nameLine.appendChild(nameLabel);
       nameLine.appendChild(createRunStatusBadge(run.status));
       nameCell.appendChild(nameLine);
       row.appendChild(nameCell);
       row.appendChild(
         createElement(
           "td",
-          "px-3 py-3 align-top text-[0.75rem] uppercase tracking-wide text-slate-400",
+          `${cellBaseClass} text-[0.75rem] uppercase tracking-wide text-slate-400`,
           getRunModeLabel(run.runMode),
         ),
       );
       row.appendChild(
         createElement(
           "td",
-          "px-3 py-3 align-top text-[0.75rem] text-slate-300",
+          `${cellBaseClass} text-[0.75rem] text-slate-300`,
           formatTimestamp(run.startedAtMs),
         ),
       );
-      const controlsCell = createElement("td", "px-3 py-3 align-top");
+      const controlsCell = createElement("td", `${cellBaseClass} text-right`);
       const stopButton = createElement(
         "button",
         "rounded-md border border-rose-500/40 bg-rose-500/10 px-3 py-1 text-xs font-semibold text-rose-200 transition-colors hover:bg-rose-500/20",
